@@ -1,0 +1,11 @@
+node_modules/
+dist/
+target/
+src-tauri/target/
+.idea/
+.vscode/
+.playwright-cli/
+output/
+*.log
+*.cleaned.*
+*.tsbuildinfo

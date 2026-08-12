@@ -1,0 +1,4 @@
+[workspace]
+members = ["crates/sharegate-core", "src-tauri"]
+resolver = "2"
+

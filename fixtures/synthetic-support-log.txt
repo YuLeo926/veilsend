@@ -1,0 +1,8 @@
+[2026-08-12 09:41:22] Support bundle (synthetic test data only)
+customer_email=marina@example.com
+api_key=sg_FAKE_DEMO_KEY_1234567890
+database=postgres://demo_user:fake_password@192.168.12.44:5432/example
+attachment=C:\Users\demo-user\Projects\Project-Firefly\debug.log
+callback=http://10.20.30.40:8080/health
+note=Escalate Project Firefly to the on-call team.
+
