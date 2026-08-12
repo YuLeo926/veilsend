@@ -1,4 +1,5 @@
 mod error;
+mod image;
 mod model;
 mod rules;
 mod sanitize;
@@ -8,6 +9,7 @@ use std::time::Instant;
 use sha2::{Digest, Sha256};
 
 pub use error::ShareGateError;
+pub use image::{DEFAULT_MAX_IMAGE_BYTES, inspect_image, sanitize_image};
 pub use model::*;
 pub use sanitize::sanitize;
 

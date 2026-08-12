@@ -27,6 +27,8 @@ import {
   UserRound,
   X,
 } from "lucide-react";
+import { ImageWorkflow } from "./components/ImageWorkflow";
+import { InputModeTabs, type InputMode } from "./components/InputModeTabs";
 import { isDesktop, sanitizeText, saveCleanedText, scanText } from "./lib/bridge";
 import { syntheticSample } from "./lib/sample";
 import type {
@@ -181,6 +183,7 @@ function FindingCard({
 
 function App() {
   const [stage, setStage] = useState<Stage>("add");
+  const [mode, setMode] = useState<InputMode>("text");
   const [text, setText] = useState("");
   const [filename, setFilename] = useState("pasted-text.txt");
   const [customTerms, setCustomTerms] = useState("");
@@ -217,7 +220,7 @@ function App() {
     setError("");
     const extension = file.name.split(".").pop()?.toLowerCase() ?? "";
     if (!acceptedExtensions.includes(extension) && !file.name.startsWith(".env")) {
-      setError("Milestone A accepts UTF-8 .txt, .log, .json, and .env files. Screenshot support is next.");
+      setError("Text mode accepts UTF-8 .txt, .log, .json, and .env files. Use Images for JPEG and PNG metadata.");
       return;
     }
     if (file.size > MAX_BYTES) {
@@ -281,6 +284,7 @@ function App() {
 
   function reset() {
     setStage("add");
+    setMode("text");
     setText("");
     setFilename("pasted-text.txt");
     setReport(null);
@@ -290,6 +294,12 @@ function App() {
     setError("");
     setCopied(false);
     setSavedPath("");
+  }
+
+  function switchMode(nextMode: InputMode) {
+    setMode(nextMode);
+    setStage("add");
+    setError("");
   }
 
   async function copyResult() {
@@ -328,8 +338,8 @@ function App() {
           <StepRail stage={stage} />
           <PrivacyNote />
           <div className="scope-note">
-            <span>Milestone A</span>
-            <p>Text, logs, JSON, and environment files. Screenshots are next.</p>
+            <span>Milestone B</span>
+            <p>Text safety plus lossless JPEG and PNG metadata cleaning.</p>
           </div>
         </aside>
 
@@ -342,8 +352,9 @@ function App() {
             </div>
           )}
 
-          {stage === "add" && (
+          {mode === "text" && stage === "add" && (
             <section className="stage-view add-stage">
+              <InputModeTabs active="text" onChange={switchMode} />
               <div className="eyebrow"><ScanLine size={15} /> Local preflight check</div>
               <h1>Catch what should not<br />leave your computer.</h1>
               <p className="lead">Paste a support log or add a text file. ShareGate flags credentials, personal data, private networks, and local paths before you send it.</p>
@@ -418,7 +429,7 @@ function App() {
             </section>
           )}
 
-          {stage === "review" && report && (
+          {mode === "text" && stage === "review" && report && (
             <section className="stage-view review-stage">
               <button className="back-button" type="button" onClick={() => setStage("add")}><ArrowLeft size={16} /> Back to source</button>
               <div className="review-heading">
@@ -485,7 +496,7 @@ function App() {
             </section>
           )}
 
-          {stage === "result" && result && (
+          {mode === "text" && stage === "result" && result && (
             <section className="stage-view result-stage">
               <div className={`result-hero status-${result.verification.status}`}>
                 <div className="result-seal">
@@ -526,6 +537,15 @@ function App() {
                 <p><AlertTriangle size={14} /> ShareGate reduces accidental exposure; it cannot guarantee that content is safe.</p>
               </div>
             </section>
+          )}
+
+          {mode === "image" && (
+            <ImageWorkflow
+              stage={stage}
+              onStageChange={setStage}
+              onSwitchToText={() => switchMode("text")}
+              onError={setError}
+            />
           )}
         </main>
       </div>

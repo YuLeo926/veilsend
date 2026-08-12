@@ -53,3 +53,47 @@ export interface SanitizeResult {
   };
 }
 
+export type ImageFormat = "jpeg" | "png";
+export type ImageMetadataCategory = "location" | "device" | "identity" | "time" | "description" | "other";
+
+export interface ImageMetadataFinding {
+  id: string;
+  label: string;
+  explanation: string;
+  category: ImageMetadataCategory;
+  severity: Severity;
+  maskedValue: string;
+}
+
+export interface ImageInspection {
+  format: ImageFormat;
+  bytes: number;
+  width: number | null;
+  height: number | null;
+  findings: ImageMetadataFinding[];
+  canCleanLosslessly: boolean;
+  warnings: string[];
+  pixelFingerprint: string;
+}
+
+export interface ImageSession {
+  sourcePath: string;
+  filename: string;
+  previewDataUrl: string;
+  inspection: ImageInspection;
+}
+
+export interface CleanedImageFile {
+  savedPath: string;
+  filename: string;
+  previewDataUrl: string;
+  originalBytes: number;
+  cleanedSize: number;
+  removedFindings: number;
+  verification: {
+    verified: boolean;
+    remainingFindings: number;
+    pixelsUnchanged: boolean;
+    message: string;
+  };
+}

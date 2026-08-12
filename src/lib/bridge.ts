@@ -1,6 +1,13 @@
 import { invoke } from "@tauri-apps/api/core";
 import { sanitizeInBrowser, scanInBrowser } from "./browserScanner";
-import type { SanitizeRequest, SanitizeResult, ScanOptions, ScanReport } from "./types";
+import type {
+  CleanedImageFile,
+  ImageSession,
+  SanitizeRequest,
+  SanitizeResult,
+  ScanOptions,
+  ScanReport,
+} from "./types";
 
 declare global {
   interface Window {
@@ -33,3 +40,16 @@ export async function saveCleanedText(defaultName: string, content: string): Pro
   return defaultName;
 }
 
+export async function pickImage(): Promise<ImageSession | null> {
+  if (!isDesktop()) {
+    throw new Error("Image metadata cleaning is available in the ShareGate desktop app.");
+  }
+  return invoke<ImageSession | null>("pick_image");
+}
+
+export async function cleanImageFile(sourcePath: string): Promise<CleanedImageFile | null> {
+  if (!isDesktop()) {
+    throw new Error("Image metadata cleaning is available in the ShareGate desktop app.");
+  }
+  return invoke<CleanedImageFile | null>("clean_image_file", { sourcePath });
+}

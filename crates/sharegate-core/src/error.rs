@@ -14,4 +14,12 @@ pub enum ShareGateError {
     OverlappingFindings,
     #[error("A replacement contains an unsupported control character.")]
     InvalidReplacement,
+    #[error("This image format is not supported yet. Choose a JPEG or PNG image.")]
+    UnsupportedImage,
+    #[error("The image could not be read safely: {0}")]
+    InvalidImage(String),
+    #[error(
+        "This image relies on EXIF orientation {0}. Normalize its orientation before removing metadata so the clean copy does not appear rotated or mirrored."
+    )]
+    OrientationNeedsNormalization(u32),
 }

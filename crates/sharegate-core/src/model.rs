@@ -128,3 +128,65 @@ pub struct SanitizeResult {
     pub cleaned_text: String,
     pub verification: VerificationReport,
 }
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ImageFormat {
+    Jpeg,
+    Png,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ImageMetadataCategory {
+    Location,
+    Device,
+    Identity,
+    Time,
+    Description,
+    Other,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageMetadataFinding {
+    pub id: String,
+    pub label: String,
+    pub explanation: String,
+    pub category: ImageMetadataCategory,
+    pub severity: Severity,
+    pub masked_value: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageInspection {
+    pub format: ImageFormat,
+    pub bytes: usize,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub findings: Vec<ImageMetadataFinding>,
+    pub can_clean_losslessly: bool,
+    pub warnings: Vec<String>,
+    pub pixel_fingerprint: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageVerification {
+    pub verified: bool,
+    pub remaining_findings: usize,
+    pub pixels_unchanged: bool,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageSanitizeResult {
+    #[serde(skip_serializing, skip_deserializing)]
+    pub cleaned_bytes: Vec<u8>,
+    pub original_bytes: usize,
+    pub cleaned_size: usize,
+    pub removed_findings: usize,
+    pub verification: ImageVerification,
+}
