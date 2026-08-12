@@ -1,0 +1,218 @@
+# ShareGate v0.1 Design
+
+## Status
+
+Approved for implementation on 2026-08-12. This specification turns the earlier CleanShare/ShareGate discussion into a concrete first release.
+
+## Product definition
+
+ShareGate is a local, cross-platform outbound safety gate. Before text, logs, configuration, or screenshots leave a user's computer, ShareGate scans them for sensitive information, lets the user review every finding, creates a sanitized copy, and scans the result again.
+
+Tagline: **Scan anything before it leaves your computer.**
+
+ShareGate is not an antivirus product and must not claim to guarantee that content is safe. It reduces accidental disclosure through deterministic checks and an explicit review step.
+
+## Initial users
+
+The first users are developers and technical-support staff who frequently share:
+
+- copied terminal output and diagnostic text;
+- `.log`, `.txt`, `.json`, and `.env` files;
+- screenshots containing paths, credentials, email addresses, or customer data.
+
+This is an acquisition focus, not a permanent restriction. The architecture must allow future document formats and team policy packs without pulling them into v0.1.
+
+## Release scope
+
+### Milestone A: functional desktop foundation
+
+Milestone A must provide a complete local workflow for pasted text and UTF-8 text files:
+
+1. Paste text or drop/select a supported file.
+2. Scan locally and group findings by severity and category.
+3. Review findings with sensitive values masked by default.
+4. Include or exclude individual findings from cleanup.
+5. Generate a clean copy without modifying the original.
+6. Rescan the generated output and show the verification result.
+7. Copy cleaned text or save a cleaned file.
+
+Initial deterministic rules cover:
+
+- common API-key and token shapes;
+- passwords and connection strings;
+- email addresses and phone-number candidates;
+- private IPv4 addresses;
+- Windows and POSIX local file paths;
+- optional user-defined sensitive words.
+
+### Milestone B: images
+
+After the text workflow is reliable, add PNG/JPEG screenshots:
+
+- local OCR with a visible confidence level;
+- manual review of OCR-derived findings;
+- irreversible visual redaction in the exported pixels;
+- QR-code detection;
+- EXIF/GPS inspection and removal;
+- post-export OCR and metadata verification.
+
+### Explicit non-goals for v0.1
+
+- Word, Excel, PowerPoint, complex PDF, video, and archives;
+- cloud processing or user accounts;
+- automatic screen or clipboard surveillance;
+- enterprise audit dashboards;
+- generative-AI classification;
+- claims of zero leakage or regulatory compliance;
+- modifying source files in place.
+
+## Experience design
+
+The primary flow has four named states: **Add**, **Review**, **Clean**, and **Verified**.
+
+The application opens on a calm drop zone with a text-paste alternative. A scan starts only after an explicit user action. The review screen leads with a plain-language summary such as “6 things may be unsafe to share,” followed by findings grouped into credentials, personal information, network information, and local context.
+
+Raw secret values are masked by default. A user may temporarily reveal a value, jump to its source context, change the proposed replacement, or exclude the finding. Severity communicates potential impact; it must not pretend to be a certainty score.
+
+Cleaning always creates a separate output. The result screen distinguishes:
+
+- **Verified:** no enabled rule finds sensitive content in the output;
+- **Needs review:** findings remain or a detector could not run;
+- **Cleaned with exceptions:** the user intentionally excluded one or more findings.
+
+The interface must state that verification covers ShareGate's enabled rules, not every possible secret.
+
+## Technical approach
+
+Use Tauri 2 for the desktop shell, React and TypeScript for the interface, and a standalone Rust library for the scan/clean/verify domain logic.
+
+Reasons for this choice:
+
+- a small cross-platform desktop bundle compared with Electron;
+- native file access without uploading content;
+- a memory-safe core suitable for processing sensitive material;
+- one reusable engine for desktop commands and a future CLI;
+- clear separation between presentation and security-sensitive transformations.
+
+The repository layout is:
+
+```text
+src/                    React application
+src-tauri/              Tauri host and command adapters
+crates/sharegate-core/  scan, sanitize, and verify library
+docs/                   product and engineering documentation
+fixtures/               synthetic, non-secret test samples
+```
+
+The UI may contain a TypeScript adapter for browser development, but production scan results must come from the Rust core. Domain types are serialized across the Tauri boundary.
+
+## Core components
+
+### Rule registry
+
+Each rule has a stable identifier, category, severity, description, detector, default replacement strategy, and whether it is enabled by default. Rules return byte ranges rather than editing input directly.
+
+Rules must be deterministic and independently testable. User-defined sensitive words are represented as a local session policy in Milestone A; persistent policy packs are deferred.
+
+### Scanner
+
+The scanner accepts UTF-8 text and produces a `ScanReport` containing findings, scan statistics, and warnings. Every finding includes:
+
+- stable rule identifier;
+- category and severity;
+- byte start/end range;
+- masked preview and limited surrounding context;
+- proposed replacement;
+- detector-specific explanation.
+
+The scanner never writes raw content or findings to logs.
+
+### Sanitizer
+
+The sanitizer receives the original content plus the user's selected finding decisions. It validates that ranges still match the scanned content, rejects overlapping or stale changes, applies replacements from the end of the text toward the beginning, and returns a new value. The original remains untouched.
+
+Default replacements are descriptive tokens such as `[REDACTED_EMAIL]` and `[REDACTED_SECRET]`. Users can override a replacement for an individual finding.
+
+### Verifier
+
+The verifier rescans sanitized output with the same effective rule set. It reports remaining findings, skipped checks, and user exceptions. “Verified” is emitted only when the scan completes and no enabled rule finds a match.
+
+### Desktop adapter
+
+Tauri commands provide scan, sanitize, verify, open-file, and save-copy operations. The adapter enforces input-size and file-type limits before invoking the core. It returns structured errors suitable for user-facing messages.
+
+## Data flow
+
+```text
+Paste or select UTF-8 file
+          |
+          v
+Validate type and size
+          |
+          v
+Rust scan engine --------> structured findings
+          |                         |
+          |                         v
+          |                  user decisions
+          |                         |
+          v                         v
+original content ----------> sanitizer
+                                    |
+                                    v
+                             clean copy in memory
+                                    |
+                                    v
+                                rescan
+                                    |
+                                    v
+                          copy/save + result status
+```
+
+No content crosses the network. Saving occurs only after a user action.
+
+## Safety and privacy constraints
+
+- No analytics, crash uploads, network APIs, or remote fonts in v0.1.
+- No source content, raw findings, or replacements in application logs.
+- Content is kept only in process memory unless the user saves a clean copy.
+- Source files are opened read-only and never overwritten.
+- Saved filenames default to `<name>.cleaned.<ext>`.
+- The UI masks detected values by default.
+- File-size limits protect responsiveness; Milestone A uses a 10 MiB limit.
+- Only UTF-8 text is accepted initially. Unsupported encodings produce a clear error instead of lossy conversion.
+
+## Error handling
+
+Errors use a stable code plus a plain-language message. Expected cases include unsupported type, invalid UTF-8, file too large, changed source content, overlapping findings, permission denial, save failure, and incomplete verification.
+
+Detector failure is fail-visible: the result becomes “Needs review” and identifies which check did not complete. The application must never silently convert a partial scan into “Verified.”
+
+## Testing strategy
+
+The Rust core is test-driven with synthetic fixtures only.
+
+- Unit tests for every rule, including positive, negative, and boundary cases.
+- Property-oriented tests for range safety and replacement ordering.
+- Sanitizer tests for overlap, stale input, multibyte UTF-8, and custom replacements.
+- Verification tests proving that selected findings disappear and exceptions remain visible.
+- TypeScript component tests for workflow state, selection, masked display, and error states.
+- One desktop smoke test covering paste, scan, clean, verify, and copy/save boundaries.
+
+Fixtures must use unmistakably fake credentials and reserved example domains/IP ranges. Real secrets or private user data must never be added to the repository.
+
+## Success criteria for Milestone A
+
+- A new user can paste a realistic synthetic log and obtain a verified cleaned copy without documentation.
+- The core detects the supported categories with stable, explainable results.
+- Cleaning never mutates the source and handles UTF-8 safely.
+- Verification cannot show success after a failed or partial scan.
+- All processing works with network access disabled.
+- Automated tests cover the scanner, sanitizer, verifier, and main interface states.
+
+## Distribution direction
+
+The scanning core, CLI foundation, base rules, and desktop application remain open source. Potential paid value later may include signed installers, automatic updates, batch workflows, managed team policies, and organization-specific rule packs. Monetization work is outside v0.1.
+
+## Naming
+
+The product and package-facing name is **ShareGate**. The existing local folder may remain `cleanshare` to avoid disruptive path changes during initialization. Before public release, repository, package, and domain availability must be checked again.
