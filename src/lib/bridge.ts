@@ -3,7 +3,7 @@ import { sanitizeInBrowser, scanInBrowser } from "./browserScanner";
 import type {
   CleanedImageFile,
   ImageSession,
-  ImageTextDecision,
+  ImageRedactionDecision,
   SanitizeRequest,
   SanitizeResult,
   ScanOptions,
@@ -51,7 +51,7 @@ export async function pickImage(): Promise<ImageSession | null> {
 export async function cleanImageFile(
   sourcePath: string,
   sourceFingerprint: string,
-  decisions: ImageTextDecision[],
+  decisions: ImageRedactionDecision[],
 ): Promise<CleanedImageFile | null> {
   if (!isDesktop()) {
     throw new Error("Image metadata cleaning is available in the ShareGate desktop app.");

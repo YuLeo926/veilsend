@@ -112,9 +112,35 @@ export interface ImageOcrInspection {
   message: string;
 }
 
-export interface ImageTextDecision {
+export interface ImageRedactionDecision {
   id: string;
   enabled: boolean;
+}
+
+export type QrKind = "webLink" | "wifiCredential" | "contactCard" | "communicationLink" | "encodedContent" | "undecodable";
+export type QrAvailability = "available" | "needsReview";
+
+export interface QrFinding {
+  id: string;
+  kind: QrKind;
+  label: string;
+  explanation: string;
+  severity: Severity;
+  maskedValue: string;
+  rectangle: ImageRect;
+}
+
+export interface QrScanReport {
+  findings: QrFinding[];
+  gridsDetected: number;
+  decodedGrids: number;
+  warnings: string[];
+}
+
+export interface ImageQrInspection {
+  availability: QrAvailability;
+  report: QrScanReport | null;
+  message: string;
 }
 
 export interface ImageSession {
@@ -124,6 +150,7 @@ export interface ImageSession {
   previewDataUrl: string;
   inspection: ImageInspection;
   ocr: ImageOcrInspection;
+  qr: ImageQrInspection;
 }
 
 export interface CleanedImageFile {
@@ -134,6 +161,8 @@ export interface CleanedImageFile {
   cleanedSize: number;
   removedMetadataFindings: number;
   redactedFindings: number;
+  redactedTextFindings: number;
+  redactedQrFindings: number;
   redactedRegions: number;
   exceptions: number;
   verification: {
@@ -141,6 +170,8 @@ export interface CleanedImageFile {
     metadataRemaining: number;
     visualFindingsRemaining: number;
     ocrChecked: boolean;
+    qrCodesRemaining: number;
+    qrChecked: boolean;
     pixelsUnchanged: boolean;
     message: string;
   };

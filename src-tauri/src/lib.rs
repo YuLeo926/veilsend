@@ -6,10 +6,11 @@ use std::{
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde::Serialize;
 use sharegate_core::{
-    DEFAULT_MAX_IMAGE_BYTES, ImageFormat, ImageInspection, ImageOcrInspection, ImageTextDecision,
-    OcrAvailability, SanitizeRequest, SanitizeResult, ScanOptions, ScanReport, ShareGateError,
-    VerificationStatus, fingerprint, inspect_image, map_ocr_findings, redact_image, sanitize,
-    sanitize_image, scan,
+    DEFAULT_MAX_IMAGE_BYTES, ImageFormat, ImageInspection, ImageOcrInspection, ImageQrInspection,
+    ImageRedactionDecision, ImageRedactionTarget, OcrAvailability, QrAvailability, SanitizeRequest,
+    SanitizeResult, ScanOptions, ScanReport, ShareGateError, VerificationStatus, fingerprint,
+    inspect_image, inspect_qr_codes, map_ocr_findings, redact_image, sanitize, sanitize_image,
+    scan,
 };
 
 mod windows_ocr;
@@ -23,6 +24,7 @@ struct ImageSession {
     preview_data_url: String,
     inspection: ImageInspection,
     ocr: ImageOcrInspection,
+    qr: ImageQrInspection,
 }
 
 #[derive(Debug, Serialize)]
@@ -32,6 +34,8 @@ struct CleanedImageVerification {
     metadata_remaining: usize,
     visual_findings_remaining: usize,
     ocr_checked: bool,
+    qr_codes_remaining: usize,
+    qr_checked: bool,
     pixels_unchanged: bool,
     message: String,
 }
@@ -46,6 +50,8 @@ struct CleanedImageFile {
     cleaned_size: usize,
     removed_metadata_findings: usize,
     redacted_findings: usize,
+    redacted_text_findings: usize,
+    redacted_qr_findings: usize,
     redacted_regions: usize,
     exceptions: usize,
     verification: CleanedImageVerification,
@@ -102,7 +108,7 @@ async fn pick_image() -> Result<Option<ImageSession>, String> {
 async fn clean_image_file(
     source_path: String,
     source_fingerprint: String,
-    decisions: Vec<ImageTextDecision>,
+    decisions: Vec<ImageRedactionDecision>,
 ) -> Result<Option<CleanedImageFile>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let source = PathBuf::from(source_path);
@@ -113,12 +119,37 @@ async fn clean_image_file(
         let source_inspection =
             inspect_image(&input, DEFAULT_MAX_IMAGE_BYTES).map_err(format_core_error)?;
         let ocr_before = inspect_visible_text(&input);
-        let visual_findings = ocr_before
+        let qr_before = inspect_qr(&input);
+        let text_findings = ocr_before
             .report
             .as_ref()
             .map(|report| report.findings.as_slice())
             .unwrap_or_default();
-        let has_visual_review = !visual_findings.is_empty();
+        let qr_findings = qr_before
+            .report
+            .as_ref()
+            .map(|report| report.findings.as_slice())
+            .unwrap_or_default();
+        let targets = text_findings
+            .iter()
+            .map(|finding| ImageRedactionTarget {
+                id: finding.id.clone(),
+                rectangles: finding.rectangles.clone(),
+            })
+            .chain(qr_findings.iter().map(|finding| ImageRedactionTarget {
+                id: finding.id.clone(),
+                rectangles: vec![finding.rectangle],
+            }))
+            .collect::<Vec<_>>();
+        let has_visual_review = !targets.is_empty();
+        let selected_text_findings = text_findings
+            .iter()
+            .filter(|finding| decision_enabled(&finding.id, &decisions))
+            .count();
+        let selected_qr_findings = qr_findings
+            .iter()
+            .filter(|finding| decision_enabled(&finding.id, &decisions))
+            .count();
 
         let (
             cleaned_bytes,
@@ -132,7 +163,7 @@ async fn clean_image_file(
                 &input,
                 DEFAULT_MAX_IMAGE_BYTES,
                 &source_fingerprint,
-                visual_findings,
+                &targets,
                 &decisions,
             )
             .map_err(format_core_error)?;
@@ -210,31 +241,42 @@ async fn clean_image_file(
             }
             _ => (false, 0),
         };
+        let qr_after = inspect_qr(&saved_bytes);
+        let (qr_checked, qr_codes_remaining) = match &qr_after.report {
+            Some(report) if qr_after.availability == QrAvailability::Available => {
+                (true, report.findings.len())
+            }
+            _ => (false, 0),
+        };
 
-        let status = if metadata_remaining > 0 || !ocr_checked {
+        let status = if metadata_remaining > 0 || !ocr_checked || !qr_checked {
             VerificationStatus::NeedsReview
         } else if exceptions > 0 {
             VerificationStatus::CleanedWithExceptions
-        } else if visual_findings_remaining > 0 {
+        } else if visual_findings_remaining > 0 || qr_codes_remaining > 0 {
             VerificationStatus::NeedsReview
         } else {
             VerificationStatus::Verified
         };
         let message = match status {
             VerificationStatus::Verified if redacted_findings > 0 => format!(
-                "Redacted {redacted_findings} visible-text risk(s), removed privacy metadata, and rechecked the saved PNG with Windows OCR."
+                "Redacted {selected_text_findings} visible-text and {selected_qr_findings} QR risk(s), removed privacy metadata, and rechecked the saved PNG."
             ),
             VerificationStatus::Verified => {
-                "Privacy metadata removed; the saved copy passed a second metadata and Windows OCR check."
+                "Privacy metadata removed; the saved copy passed a second metadata, Windows OCR, and QR check."
                     .to_owned()
             }
             VerificationStatus::CleanedWithExceptions => format!(
-                "Saved with {exceptions} visible-text exception(s). The receipt does not claim this copy is fully clean."
+                "Saved with {exceptions} visual exception(s). The receipt does not claim this copy is fully clean."
             ),
             VerificationStatus::NeedsReview if metadata_remaining > 0 => {
                 "The saved copy still contains removable privacy metadata.".to_owned()
             }
             VerificationStatus::NeedsReview if !ocr_checked => ocr_after.message.clone(),
+            VerificationStatus::NeedsReview if !qr_checked => qr_after.message.clone(),
+            VerificationStatus::NeedsReview if qr_codes_remaining > 0 => format!(
+                "The saved copy still contains {qr_codes_remaining} QR-like code(s)."
+            ),
             VerificationStatus::NeedsReview => format!(
                 "Windows OCR still found {visual_findings_remaining} supported sensitive-text risk(s) in the saved copy."
             ),
@@ -253,6 +295,8 @@ async fn clean_image_file(
             cleaned_size: saved_bytes.len(),
             removed_metadata_findings,
             redacted_findings,
+            redacted_text_findings: selected_text_findings,
+            redacted_qr_findings: selected_qr_findings,
             redacted_regions,
             exceptions,
             verification: CleanedImageVerification {
@@ -260,6 +304,8 @@ async fn clean_image_file(
                 metadata_remaining,
                 visual_findings_remaining,
                 ocr_checked,
+                qr_codes_remaining,
+                qr_checked,
                 pixels_unchanged,
                 message,
             },
@@ -273,6 +319,7 @@ fn load_image_session(path: &Path) -> Result<ImageSession, String> {
     let bytes = read_image(path)?;
     let inspection = inspect_image(&bytes, DEFAULT_MAX_IMAGE_BYTES).map_err(format_core_error)?;
     let ocr = inspect_visible_text(&bytes);
+    let qr = inspect_qr(&bytes);
     let extension = match inspection.format {
         ImageFormat::Jpeg => "jpg",
         ImageFormat::Png => "png",
@@ -288,6 +335,7 @@ fn load_image_session(path: &Path) -> Result<ImageSession, String> {
         preview_data_url: data_url(extension, &bytes),
         inspection,
         ocr,
+        qr,
     })
 }
 
@@ -352,6 +400,51 @@ fn inspect_visible_text(bytes: &[u8]) -> ImageOcrInspection {
             message,
         },
     }
+}
+
+fn inspect_qr(bytes: &[u8]) -> ImageQrInspection {
+    match inspect_qr_codes(bytes, DEFAULT_MAX_IMAGE_BYTES) {
+        Ok(report) => {
+            let complete = report.warnings.is_empty()
+                && report.findings.len() == report.grids_detected;
+            let availability = if complete {
+                QrAvailability::Available
+            } else {
+                QrAvailability::NeedsReview
+            };
+            let message = if !complete {
+                "QR inspection needs review because one or more detected regions could not be mapped safely."
+                    .to_owned()
+            } else if report.findings.is_empty() {
+                "Local QR inspection found no QR-like codes.".to_owned()
+            } else {
+                format!(
+                    "Local QR inspection found {} QR-like code(s) for review; {} decoded successfully.",
+                    report.findings.len(), report.decoded_grids
+                )
+            };
+            ImageQrInspection {
+                availability,
+                report: Some(report),
+                message,
+            }
+        }
+        Err(_) => ImageQrInspection {
+            availability: QrAvailability::NeedsReview,
+            report: None,
+            message:
+                "QR inspection could not complete locally. Review the image manually before sharing."
+                    .to_owned(),
+        },
+    }
+}
+
+fn decision_enabled(id: &str, decisions: &[ImageRedactionDecision]) -> bool {
+    decisions
+        .iter()
+        .find(|decision| decision.id == id)
+        .map(|decision| decision.enabled)
+        .unwrap_or(true)
 }
 
 fn data_url(extension: &str, bytes: &[u8]) -> String {

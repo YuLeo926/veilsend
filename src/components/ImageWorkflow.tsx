@@ -14,6 +14,7 @@ import {
   LockKeyhole,
   MapPin,
   MessageSquareText,
+  QrCode,
   RefreshCcw,
   ScanLine,
   ShieldCheck,
@@ -25,7 +26,7 @@ import type {
   CleanedImageFile,
   ImageMetadataCategory,
   ImageSession,
-  ImageTextDecision,
+  ImageRedactionDecision,
   Severity,
 } from "../lib/types";
 import { InputModeTabs } from "./InputModeTabs";
@@ -86,10 +87,18 @@ export function ImageWorkflow({
 }) {
   const [session, setSession] = useState<ImageSession | null>(null);
   const [result, setResult] = useState<CleanedImageFile | null>(null);
-  const [decisions, setDecisions] = useState<Record<string, ImageTextDecision>>({});
+  const [decisions, setDecisions] = useState<Record<string, ImageRedactionDecision>>({});
   const [busy, setBusy] = useState(false);
 
-  const visualFindings = session?.ocr.report?.findings ?? [];
+  const textFindings = session?.ocr.report?.findings ?? [];
+  const qrFindings = session?.qr.report?.findings ?? [];
+  const visualFindings = useMemo(
+    () => [
+      ...textFindings.map((finding) => ({ id: finding.id, rectangles: finding.rectangles, type: "text" as const })),
+      ...qrFindings.map((finding) => ({ id: finding.id, rectangles: [finding.rectangle], type: "qr" as const })),
+    ],
+    [qrFindings, textFindings],
+  );
   const selectedVisualCount = useMemo(
     () => visualFindings.filter((finding) => decisions[finding.id]?.enabled !== false).length,
     [decisions, visualFindings],
@@ -103,7 +112,10 @@ export function ImageWorkflow({
       if (!nextSession) return;
       setSession(nextSession);
       setDecisions(Object.fromEntries(
-        (nextSession.ocr.report?.findings ?? []).map((finding) => [finding.id, {
+        [
+          ...(nextSession.ocr.report?.findings ?? []),
+          ...(nextSession.qr.report?.findings ?? []),
+        ].map((finding) => [finding.id, {
           id: finding.id,
           enabled: true,
         }]),
@@ -149,16 +161,16 @@ export function ImageWorkflow({
     return (
       <section className="stage-view add-stage image-add-stage">
         <InputModeTabs active="image" onChange={(mode) => mode === "text" && onSwitchToText()} />
-        <div className="eyebrow"><Fingerprint size={15} /> Visible text + hidden metadata</div>
+        <div className="eyebrow"><Fingerprint size={15} /> Visible text + QR + hidden metadata</div>
         <h1>Find what the image<br />should not reveal.</h1>
-        <p className="lead">Choose a JPEG or PNG. ShareGate uses Windows OCR to flag visible credentials and personal details, then checks location, device, identity, time, and hidden text metadata.</p>
+        <p className="lead">Choose a JPEG or PNG. ShareGate checks visible credentials, QR codes, location, device identity, time, and hidden image metadata—all locally.</p>
 
         <div className="image-picker-card">
           <div className="image-picker-visual" aria-hidden="true">
             <div className="photo-sheet photo-sheet-back" />
             <div className="photo-sheet">
               <ImageIcon size={44} />
-              <span>OCR</span><span>EXIF</span><span>GPS</span>
+              <span>OCR</span><span>QR</span><span>EXIF</span>
             </div>
             <div className="metadata-sweep"><ShieldCheck size={28} /></div>
           </div>
@@ -175,13 +187,14 @@ export function ImageWorkflow({
               {busy ? <LoaderCircle className="spin" size={18} /> : <FolderOpen size={18} />}
               Choose image
             </button>
-            {!isDesktop() && <div className="desktop-only-note">Image OCR and cleaning run in the Windows desktop app. The browser preview keeps this control disabled.</div>}
+            {!isDesktop() && <div className="desktop-only-note">Image checks and cleaning run in the Windows desktop app. The browser preview keeps this control disabled.</div>}
           </div>
         </div>
 
         <div className="trust-row">
           <span><LockKeyhole size={15} /> No upload</span>
           <span><ScanLine size={15} /> Windows OCR on-device</span>
+          <span><QrCode size={15} /> QR decoded locally</span>
           <span><RefreshCcw size={15} /> Saved copy rechecked</span>
         </div>
       </section>
@@ -189,7 +202,7 @@ export function ImageWorkflow({
   }
 
   if (stage === "review" && session) {
-    const { inspection, ocr } = session;
+    const { inspection, ocr, qr } = session;
     const totalFindings = inspection.findings.length + visualFindings.length;
     const imageWidth = inspection.width ?? 1;
     const imageHeight = inspection.height ?? 1;
@@ -201,7 +214,7 @@ export function ImageWorkflow({
           <div>
             <div className="eyebrow"><ScanLine size={15} /> Image safety review</div>
             <h1>{totalFindings ? `${totalFindings} risk${totalFindings === 1 ? "" : "s"} found.` : "No supported risks found."}</h1>
-            <p>{totalFindings ? "Visible-text regions are selected for irreversible pixel redaction. Hidden metadata is always removed from the separate copy." : "ShareGate can still make a separate copy and repeat both checks before reporting a result."}</p>
+            <p>{totalFindings ? "Visible-text and QR regions are selected for irreversible pixel redaction. Hidden metadata is always removed from the separate copy." : "ShareGate can still make a separate copy and repeat all three checks before reporting a result."}</p>
           </div>
           <div className="scan-receipt">
             <span>IMAGE RECEIPT</span>
@@ -226,6 +239,15 @@ export function ImageWorkflow({
           </div>
         </div>
 
+        <div className={`ocr-status qr-status ${qr.availability}`}>
+          {qr.availability === "available" ? <QrCode size={19} /> : <AlertTriangle size={19} />}
+          <div>
+            <strong>{qr.availability === "available" ? "Local QR check complete" : "QR codes need manual review"}</strong>
+            <span>{qr.message}</span>
+            <small>Decoded payloads stay inside the Rust core and are never shown in the interface.</small>
+          </div>
+        </div>
+
         <div className="image-review-layout">
           <aside className="image-preview-card">
             <div className="image-preview-frame">
@@ -234,7 +256,7 @@ export function ImageWorkflow({
                 <div className="redaction-overlay" aria-hidden="true">
                   {visualFindings.flatMap((finding, findingIndex) => finding.rectangles.map((rect, rectIndex) => (
                     <span
-                      className={`redaction-region ${decisions[finding.id]?.enabled === false ? "excluded" : "selected"}`}
+                      className={`redaction-region ${finding.type === "qr" ? "qr-region" : ""} ${decisions[finding.id]?.enabled === false ? "excluded" : "selected"}`}
                       key={`${finding.id}-${rectIndex}`}
                       style={{
                         left: `${(rect.x / imageWidth) * 100}%`,
@@ -260,8 +282,8 @@ export function ImageWorkflow({
           </aside>
 
           <div className="image-findings-column">
-            {!!visualFindings.length && <div className="image-finding-section"><span>Visible text</span><b>{visualFindings.length}</b></div>}
-            {visualFindings.map((finding, index) => {
+            {!!textFindings.length && <div className="image-finding-section"><span>Visible text</span><b>{textFindings.length}</b></div>}
+            {textFindings.map((finding, index) => {
               const selected = decisions[finding.id]?.enabled !== false;
               return (
                 <article className={`metadata-card visual-finding severity-${finding.severity} ${selected ? "selected" : "excluded"}`} key={finding.id}>
@@ -275,6 +297,38 @@ export function ImageWorkflow({
                     <p>{finding.explanation}</p>
                     <code>{finding.maskedValue}</code>
                     <span className="confidence-note">Confidence: not provided by Windows OCR</span>
+                  </div>
+                  <button
+                    className={`visual-decision ${selected ? "selected" : ""}`}
+                    type="button"
+                    aria-pressed={selected}
+                    onClick={() => setDecisions((current) => ({
+                      ...current,
+                      [finding.id]: { id: finding.id, enabled: !selected },
+                    }))}
+                  >
+                    {selected && <Check size={12} />}
+                    {selected ? "Redact" : "Keep"}
+                  </button>
+                </article>
+              );
+            })}
+
+            {!!qrFindings.length && <div className="image-finding-section qr-section"><span>QR codes</span><b>{qrFindings.length}</b></div>}
+            {qrFindings.map((finding, index) => {
+              const selected = decisions[finding.id]?.enabled !== false;
+              return (
+                <article className={`metadata-card visual-finding qr-finding severity-${finding.severity} ${selected ? "selected" : "excluded"}`} key={finding.id}>
+                  <span className="metadata-icon"><QrCode size={18} /></span>
+                  <div>
+                    <div className="metadata-heading">
+                      <strong>{textFindings.length + index + 1}. {finding.label}</strong>
+                      <span className={`severity-pill ${finding.severity}`}>{severityLabel[finding.severity]}</span>
+                    </div>
+                    <small>Machine-readable region · payload hidden</small>
+                    <p>{finding.explanation}</p>
+                    <code>{finding.maskedValue}</code>
+                    <span className="confidence-note">Content never leaves the local Rust scanner</span>
                   </div>
                   <button
                     className={`visual-decision ${selected ? "selected" : ""}`}
@@ -317,7 +371,7 @@ export function ImageWorkflow({
               <div className="empty-findings compact">
                 <ShieldCheck size={28} />
                 <strong>No supported risks detected</strong>
-                <p>The saved copy will still be checked again. OCR and rule coverage is limited, so read the image once before sharing.</p>
+                <p>The saved copy will still be checked again. OCR, QR, and metadata coverage is limited, so read the image once before sharing.</p>
               </div>
             )}
 
@@ -354,7 +408,7 @@ export function ImageWorkflow({
           <div className="verification-ticket">
             <span>SHAREGATE CHECK</span>
             <strong>{passed ? "PASSED" : "REVIEW"}</strong>
-            <small>{result.verification.metadataRemaining + result.verification.visualFindingsRemaining} supported risks remain</small>
+            <small>{result.verification.metadataRemaining + result.verification.visualFindingsRemaining + result.verification.qrCodesRemaining} supported risks remain</small>
           </div>
         </div>
 
@@ -366,11 +420,16 @@ export function ImageWorkflow({
               <div><strong>{result.filename}</strong><small>Separate clean copy · {formatBytes(result.cleanedSize)}</small></div>
             </div>
             <div className="verification-facts">
-              <div><CheckCircle2 size={18} /><span><strong>{result.redactedFindings}</strong> visible-text risks redacted</span></div>
+              <div><CheckCircle2 size={18} /><span><strong>{result.redactedTextFindings}</strong> visible-text risks redacted</span></div>
+              <div><CheckCircle2 size={18} /><span><strong>{result.redactedQrFindings}</strong> QR risks redacted</span></div>
               <div><CheckCircle2 size={18} /><span><strong>{result.removedMetadataFindings}</strong> metadata risks removed</span></div>
               <div className={result.verification.ocrChecked ? "" : "fact-review"}>
                 {result.verification.ocrChecked ? <CheckCircle2 size={18} /> : <AlertTriangle size={18} />}
                 <span><strong>{result.verification.ocrChecked ? "Complete" : "Review"}</strong> saved-file OCR check</span>
+              </div>
+              <div className={result.verification.qrChecked ? "" : "fact-review"}>
+                {result.verification.qrChecked ? <CheckCircle2 size={18} /> : <AlertTriangle size={18} />}
+                <span><strong>{result.verification.qrChecked ? "Complete" : "Review"}</strong> saved-file QR check</span>
               </div>
               <div><CheckCircle2 size={18} /><span><strong>{result.redactedFindings ? "Rewritten" : result.verification.pixelsUnchanged ? "Exact" : "Changed"}</strong> output pixels</span></div>
             </div>
@@ -381,7 +440,7 @@ export function ImageWorkflow({
 
         <div className="result-footer">
           <button className="text-button" type="button" onClick={startAgain}><RefreshCcw size={15} /> Check another image</button>
-          <p><AlertTriangle size={14} /> OCR and rule checks reduce accidental exposure; they cannot prove an image contains no sensitive information.</p>
+          <p><AlertTriangle size={14} /> OCR, QR, and metadata checks reduce accidental exposure; they cannot prove an image contains no sensitive information.</p>
         </div>
       </section>
     );

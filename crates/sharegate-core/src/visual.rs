@@ -3,8 +3,9 @@ use std::io::Cursor;
 use image::{DynamicImage, ImageFormat as EncodedFormat, Rgba};
 
 use crate::{
-    ImageRect, ImageRedactionResult, ImageTextDecision, ImageTextFinding, OcrConfidence,
-    OcrScanReport, OcrWord, ScanOptions, ShareGateError, fingerprint, inspect_image, scan,
+    ImageRect, ImageRedactionDecision, ImageRedactionResult, ImageRedactionTarget,
+    ImageTextFinding, OcrConfidence, OcrScanReport, OcrWord, ScanOptions, ShareGateError,
+    fingerprint, inspect_image, scan,
 };
 
 const MAX_DECODED_PIXELS: u64 = 40_000_000;
@@ -100,8 +101,8 @@ pub fn redact_image(
     input: &[u8],
     max_bytes: usize,
     expected_file_fingerprint: &str,
-    findings: &[ImageTextFinding],
-    decisions: &[ImageTextDecision],
+    targets: &[ImageRedactionTarget],
+    decisions: &[ImageRedactionDecision],
 ) -> Result<ImageRedactionResult, ShareGateError> {
     if fingerprint(input) != expected_file_fingerprint {
         return Err(ShareGateError::StaleContent);
@@ -126,28 +127,28 @@ pub fn redact_image(
         )));
     }
 
-    let enabled = |finding: &ImageTextFinding| {
+    let enabled = |target: &ImageRedactionTarget| {
         decisions
             .iter()
-            .find(|decision| decision.id == finding.id)
+            .find(|decision| decision.id == target.id)
             .map(|decision| decision.enabled)
             .unwrap_or(true)
     };
-    let selected = findings
+    let selected = targets
         .iter()
-        .filter(|finding| enabled(finding))
+        .filter(|target| enabled(target))
         .collect::<Vec<_>>();
-    let exceptions = findings.len().saturating_sub(selected.len());
+    let exceptions = targets.len().saturating_sub(selected.len());
     let rectangles = normalize_rectangles(
         selected
             .iter()
-            .flat_map(|finding| finding.rectangles.iter().copied()),
+            .flat_map(|target| target.rectangles.iter().copied()),
         width,
         height,
     );
     if !selected.is_empty() && rectangles.is_empty() {
         return Err(ShareGateError::InvalidImage(
-            "The selected OCR findings did not contain valid image regions.".to_owned(),
+            "The selected findings did not contain valid image regions.".to_owned(),
         ));
     }
 
@@ -263,7 +264,7 @@ mod tests {
     use image::{DynamicImage, GenericImageView, ImageFormat, Rgb, RgbImage};
 
     use super::*;
-    use crate::{Category, DEFAULT_MAX_IMAGE_BYTES, Severity};
+    use crate::DEFAULT_MAX_IMAGE_BYTES;
 
     fn encoded_image() -> Vec<u8> {
         let image = DynamicImage::ImageRgb8(RgbImage::from_pixel(80, 30, Rgb([240, 240, 240])));
@@ -371,27 +372,20 @@ mod tests {
     #[test]
     fn redacts_selected_regions_and_exports_metadata_free_png() {
         let source = encoded_image();
-        let finding = ImageTextFinding {
+        let target = ImageRedactionTarget {
             id: "finding-1".to_owned(),
-            rule_id: "personal.email".to_owned(),
-            label: "Email address".to_owned(),
-            explanation: "Sensitive".to_owned(),
-            category: Category::Personal,
-            severity: Severity::Medium,
-            masked_value: "al************om".to_owned(),
             rectangles: vec![ImageRect {
                 x: 10,
                 y: 10,
                 width: 20,
                 height: 6,
             }],
-            confidence: OcrConfidence::NotProvided,
         };
         let result = redact_image(
             &source,
             DEFAULT_MAX_IMAGE_BYTES,
             &fingerprint(&source),
-            &[finding],
+            &[target],
             &[],
         )
         .unwrap();
@@ -413,29 +407,22 @@ mod tests {
     #[test]
     fn respects_exceptions_and_rejects_stale_source() {
         let source = encoded_image();
-        let finding = ImageTextFinding {
+        let target = ImageRedactionTarget {
             id: "finding-1".to_owned(),
-            rule_id: "custom.sensitive-term".to_owned(),
-            label: "Custom sensitive term".to_owned(),
-            explanation: "Sensitive".to_owned(),
-            category: Category::Custom,
-            severity: Severity::High,
-            masked_value: "Fi****ly".to_owned(),
             rectangles: vec![ImageRect {
                 x: 10,
                 y: 10,
                 width: 20,
                 height: 6,
             }],
-            confidence: OcrConfidence::NotProvided,
         };
         let result = redact_image(
             &source,
             DEFAULT_MAX_IMAGE_BYTES,
             &fingerprint(&source),
-            std::slice::from_ref(&finding),
-            &[ImageTextDecision {
-                id: finding.id.clone(),
+            std::slice::from_ref(&target),
+            &[ImageRedactionDecision {
+                id: target.id.clone(),
                 enabled: false,
             }],
         )
@@ -444,7 +431,7 @@ mod tests {
         assert_eq!(result.exceptions, 1);
 
         assert!(matches!(
-            redact_image(&source, DEFAULT_MAX_IMAGE_BYTES, "stale", &[finding], &[]),
+            redact_image(&source, DEFAULT_MAX_IMAGE_BYTES, "stale", &[target], &[]),
             Err(ShareGateError::StaleContent)
         ));
     }

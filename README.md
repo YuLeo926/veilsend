@@ -2,13 +2,13 @@
 
 **Scan anything before it leaves your computer.**
 
-ShareGate is a local-first outbound safety gate for text, logs, configuration files, and images. It detects likely credentials and personal context, finds privacy metadata hidden in JPEG and PNG files, irreversibly covers selected visible-text risks, produces a separate clean copy, and verifies that output before it is shared.
+ShareGate is a local-first outbound safety gate for text, logs, configuration files, and images. It detects likely credentials and personal context, finds QR codes and hidden image metadata, irreversibly covers selected visual risks, produces a separate clean copy, and verifies that output before it is shared.
 
 > ShareGate reduces accidental disclosure. It does not guarantee that content is safe and is not a compliance product.
 
 ## Current milestone
 
-Milestone B includes the complete text workflow plus image OCR, visual redaction, and lossless metadata cleaning:
+Milestone B includes the complete text workflow plus image OCR, QR redaction, and lossless metadata cleaning:
 
 - paste text or open/drop UTF-8 `.txt`, `.log`, `.json`, and `.env` files;
 - scan with deterministic local rules;
@@ -24,13 +24,16 @@ Milestone B includes the complete text workflow plus image OCR, visual redaction
 - state explicitly that Windows OCR does not provide a confidence score;
 - cover selected regions with opaque pixels and export a separate metadata-free PNG;
 - rerun Windows OCR and the ShareGate rules against the saved file before reporting success;
+- detect multiple and rotated QR codes locally and classify them without returning decoded payloads to the interface;
+- keep undecodable extracted QR regions visible for review instead of treating them as safe;
+- redact selected QR regions with opaque pixels and repeat QR detection on the saved PNG;
 - inspect JPEG and PNG metadata for location, device, identity, timestamps, descriptions, XMP, IPTC, and comments;
 - remove supported privacy metadata without decoding or recompressing image pixels;
 - preserve ICC colour profiles;
 - save to a separate `.cleaned` image and verify both metadata removal and an unchanged pixel stream;
 - block lossless cleaning when EXIF orientation is non-normal or cannot be safely parsed.
 
-Face detection and QR detection belong to later slices. Complex PDF and Office formats are intentionally outside v0.1.
+Face detection and one-dimensional barcode detection belong to later slices. Complex PDF and Office formats are intentionally outside v0.1.
 
 ## Architecture
 
@@ -76,6 +79,12 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo check -p sharegate
 ```
 
+Build the offline executable through Tauri so the frontend is embedded rather than pointing at the development server:
+
+```bash
+npm run tauri build -- --no-bundle
+```
+
 ## Privacy model
 
 - No analytics, crash uploads, accounts, remote fonts, or cloud APIs.
@@ -84,8 +93,9 @@ cargo check -p sharegate
 - Saving is explicit and defaults to a `.cleaned` or `.redacted` filename.
 - Text input is limited to 10 MiB; image input is limited to 25 MiB.
 - Metadata-only image cleaning preserves the encoded pixel stream and ICC colour profiles; verification compares a SHA-256 fingerprint of the encoded pixel data before and after cleaning.
-- Visual redaction rewrites selected pixels and always exports PNG. It strips container metadata and reruns Windows OCR plus the deterministic rules on the saved file.
+- Visual redaction rewrites selected pixels and always exports PNG. It strips container metadata and reruns Windows OCR, deterministic text rules, and QR detection on the saved file.
 - The complete OCR transcript is not sent to the interface. Only masked rule findings, categories, and the image rectangles needed for review cross the desktop command boundary.
+- Decoded QR payload bytes stay inside the Rust core. The interface receives only a coarse type, byte count, severity, opaque ID, and review rectangle.
 - `Verified` covers the supported local detector and metadata checks; it is not proof that an image contains no sensitive information.
 
 The browser preview itself is delivered by a local Vite server during development. The packaged application is the intended offline distribution.
@@ -95,8 +105,10 @@ The browser preview itself is delivered by a local Vite server during developmen
 - [Product and engineering design](docs/superpowers/specs/2026-08-12-sharegate-v0.1-design.md)
 - [Image metadata design](docs/superpowers/specs/2026-08-12-sharegate-image-metadata-design.md)
 - [Local OCR and visual redaction design](docs/superpowers/specs/2026-08-12-sharegate-ocr-redaction-design.md)
+- [Local QR redaction design](docs/superpowers/specs/2026-08-12-sharegate-qr-redaction-design.md)
 - [Milestone A implementation plan](docs/superpowers/plans/2026-08-12-sharegate-milestone-a.md)
 - [OCR and visual redaction implementation plan](docs/superpowers/plans/2026-08-12-sharegate-ocr-redaction.md)
+- [QR redaction implementation plan](docs/superpowers/plans/2026-08-12-sharegate-qr-redaction.md)
 - [Security policy and threat model](SECURITY.md)
 - [Development and verification notes](docs/development.md)
 

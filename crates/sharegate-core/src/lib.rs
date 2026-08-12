@@ -1,6 +1,7 @@
 mod error;
 mod image;
 mod model;
+mod qr;
 mod rules;
 mod sanitize;
 mod visual;
@@ -12,6 +13,7 @@ use sha2::{Digest, Sha256};
 pub use error::ShareGateError;
 pub use image::{DEFAULT_MAX_IMAGE_BYTES, inspect_image, sanitize_image};
 pub use model::*;
+pub use qr::inspect_qr_codes;
 pub use sanitize::sanitize;
 pub use visual::{map_ocr_findings, redact_image};
 

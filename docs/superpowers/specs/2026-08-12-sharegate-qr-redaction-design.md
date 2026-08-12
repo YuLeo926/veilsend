@@ -24,11 +24,11 @@ It does not add one-dimensional barcodes, Data Matrix, Aztec, PDF417, camera cap
 
 ## Chosen approach
 
-Use the pure-Rust `rqrr` detector in `sharegate-core`. Its grid-first API returns four image-space bounds before decoding, which is important for fail-visible behavior: a located grid that cannot be decoded is still a reviewable, redactable finding.
+Use the pure-Rust `quircs` detector in `sharegate-core`. Its extracted-code API returns four image-space corners separately from payload decoding, which is important for fail-visible behavior: a located code that cannot be decoded is still a reviewable, redactable finding.
 
 Alternatives considered:
 
-- `quircs` is also local and mature, but its iterator combines extraction more tightly with the code result and is less direct for preserving every undecodable candidate as a redaction target.
+- `rqrr` has a convenient grid-first API, but its current release pulls an `lru` version covered by a 2026 panic-safety memory-unsoundness advisory. Carrying a private dependency fork is not justified for this slice.
 - A Windows or external scanner would duplicate platform adapters, weaken the cross-platform core boundary, and provide no safety benefit for this slice.
 
 The QR detector receives only an in-memory grayscale image. It performs no network access and writes no temporary image or payload file.
@@ -49,7 +49,7 @@ The interface does not receive a host name, user name, SSID, phone number, email
 
 ## Detection and classification
 
-The core decodes the source image with the existing pixel and byte limits, converts it to grayscale, and asks `rqrr` to locate grids. Each returned grid becomes exactly one finding even if decoding fails.
+The core decodes the source image with the existing pixel and byte limits, converts it to grayscale, and asks `quircs` to locate codes. Each successfully extracted code becomes exactly one finding even if payload decoding fails. If the detector reports an extraction failure without usable corners, the inspection is incomplete and cannot produce a verified result.
 
 Successful payloads are classified in this order:
 
@@ -78,7 +78,7 @@ Before writing output, the desktop adapter rereads and fingerprints the source. 
 
 Selected OCR word rectangles and selected QR rectangles are converted into generic redaction targets. The core fills their pixels with the existing opaque ink, normalizes display orientation when necessary, and writes a metadata-free PNG. Overlapping rectangles are safe and may be painted more than once. The source file is never overwritten.
 
-If no OCR or QR region is selected, the existing lossless metadata-only path remains in use.
+If no OCR or QR region is found, the existing lossless metadata-only path remains in use. When visual findings exist but the user keeps all of them, ShareGate still writes a normalized metadata-free PNG so the saved-file visual verification runs against the same export path used for other reviewed images.
 
 ## Verification semantics
 

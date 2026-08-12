@@ -272,6 +272,7 @@ button { color: inherit; }
 .ocr-status strong { font-size: 11px; }
 .ocr-status span { margin-top: 3px; color: var(--muted); font-size: 9px; line-height: 1.45; }
 .ocr-status small { margin-top: 6px; color: #7d746a; font-size: 8px; }
+.qr-status { margin-top: 20px; }
 .image-review-layout { margin-top: 36px; display: grid; grid-template-columns: minmax(260px,.78fr) minmax(360px,1.22fr); gap: 25px; align-items: start; }
 .image-preview-card { position: sticky; top: 24px; overflow: hidden; border: 1px solid var(--line-dark); border-radius: 13px 13px 13px 4px; background: rgba(249,247,241,.86); box-shadow: 9px 11px 0 rgba(60,53,42,.07); }
 .image-preview-frame { min-height: 310px; max-height: 480px; display: grid; place-items: center; padding: 18px; background: repeating-conic-gradient(#e3ded4 0 25%, #ece8e0 0 50%) 50%/18px 18px; }
@@ -283,6 +284,9 @@ button { color: inherit; }
 .redaction-region.excluded { border-color: #777269; border-style: dashed; background: rgba(119,114,105,.1); }
 .redaction-region b { position: absolute; left: -2px; top: -17px; min-width: 15px; height: 15px; padding: 0 3px; display: grid; place-items: center; color: white; border-radius: 3px 3px 3px 0; background: var(--orange-dark); font: 800 8px/1 "Aptos", sans-serif; }
 .redaction-region.excluded b { background: #777269; }
+.redaction-region.qr-region { border-width: 3px; border-style: double; background: rgba(45,74,105,.18); }
+.redaction-region.qr-region b { background: #2d4a69; }
+.redaction-region.qr-region.excluded { border-style: dashed; }
 .image-preview-meta { padding: 14px 16px; border-top: 1px solid var(--line); }
 .image-preview-meta strong, .image-preview-meta span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .image-preview-meta strong { font-size: 12px; }
@@ -300,6 +304,7 @@ button { color: inherit; }
 .metadata-card code { color: #6e6961; font: 9px "Cascadia Mono", monospace; }
 .image-finding-section { margin: 2px 0 9px; display: flex; align-items: center; justify-content: space-between; color: var(--orange-dark); font-size: 9px; font-weight: 800; text-transform: uppercase; letter-spacing: .11em; }
 .image-finding-section.metadata-section { margin-top: 22px; color: #656057; }
+.image-finding-section.qr-section { margin-top: 22px; color: #2d4a69; }
 .image-finding-section b { min-width: 22px; height: 18px; display: grid; place-items: center; border: 1px solid currentColor; border-radius: 99px; font-size: 8px; }
 .visual-finding { padding-right: 98px; }
 .visual-finding.excluded { border-left-color: #777269; background: rgba(235,232,225,.55); }

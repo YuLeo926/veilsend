@@ -256,9 +256,63 @@ pub struct ImageOcrInspection {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct ImageTextDecision {
+pub struct ImageRedactionDecision {
     pub id: String,
     pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageRedactionTarget {
+    pub id: String,
+    pub rectangles: Vec<ImageRect>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum QrKind {
+    WebLink,
+    WifiCredential,
+    ContactCard,
+    CommunicationLink,
+    EncodedContent,
+    Undecodable,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct QrFinding {
+    pub id: String,
+    pub kind: QrKind,
+    pub label: String,
+    pub explanation: String,
+    pub severity: Severity,
+    pub masked_value: String,
+    pub rectangle: ImageRect,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct QrScanReport {
+    pub findings: Vec<QrFinding>,
+    pub grids_detected: usize,
+    pub decoded_grids: usize,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum QrAvailability {
+    Available,
+    NeedsReview,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageQrInspection {
+    pub availability: QrAvailability,
+    pub report: Option<QrScanReport>,
+    pub message: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

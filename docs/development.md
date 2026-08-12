@@ -14,6 +14,8 @@ npm run build
 cargo check -p sharegate
 ```
 
+For the final offline executable, use `npm run tauri build -- --no-bundle`. A plain `cargo build --release` does not run the frontend build or enable Tauri's embedded custom protocol and may leave the executable pointing at the development server.
+
 The last check compiles the Windows desktop shell and therefore requires local endpoint security to allow Cargo-generated build scripts. Do not disable endpoint security automatically. If an organization blocks `target/**/build-script-build.exe`, ask its administrator to approve the Rust/Tauri build workflow or build in an approved development environment.
 
 `cargo audit` currently exits successfully with no vulnerability advisories. It also reports maintenance warnings for GTK3-era crates retained in Tauri's cross-platform dependency graph; the Windows target does not compile or link those Linux GTK dependencies. Re-evaluate the warnings before shipping a Linux build.
@@ -25,6 +27,8 @@ The last check compiles the Windows desktop shell and therefore requires local e
 Image inspection and cleaning are desktop-only because they use native file pickers and the Rust container engine. JPEG and PNG cleanup rewrites metadata containers without decoding pixels. The engine verifies an encoded-pixel fingerprint after cleanup and refuses images whose EXIF orientation cannot be removed without changing display semantics.
 
 Visible-text inspection is currently Windows-only. The desktop adapter uses the current user's installed `Windows.Media.Ocr` recognizer, keeps the full OCR transcript inside the Rust process, and passes masked findings plus pixel rectangles to the review interface. Visual-redaction outputs are re-encoded as PNG and checked again with Windows OCR after the saved file is reread.
+
+QR inspection is implemented in the cross-platform Rust core with `quircs`. Decoded payload bytes never cross the desktop command boundary. Extracted regions remain reviewable even when payload decoding fails, and the saved PNG must contain zero supported QR-like codes before it can be verified without exceptions.
 
 ## Synthetic data only
 
@@ -40,4 +44,11 @@ cargo run -p sharegate-core --example make_metadata_fixture -- output/sharegate-
 
 ```bash
 cargo test -p sharegate windows_ocr::tests::recognizes_the_synthetic_acceptance_fixture -- --ignored
+```
+
+`fixtures/qr-sensitive-sample.png` contains a synthetic link under the reserved `example.com` domain. Regenerate it and run the QR core acceptance tests with:
+
+```bash
+cargo run -p sharegate-core --example make_qr_fixture
+cargo test -p sharegate-core qr::tests
 ```
