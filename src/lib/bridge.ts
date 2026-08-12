@@ -3,6 +3,7 @@ import { sanitizeInBrowser, scanInBrowser } from "./browserScanner";
 import type {
   CleanedImageFile,
   ImageSession,
+  ImageTextDecision,
   SanitizeRequest,
   SanitizeResult,
   ScanOptions,
@@ -47,9 +48,17 @@ export async function pickImage(): Promise<ImageSession | null> {
   return invoke<ImageSession | null>("pick_image");
 }
 
-export async function cleanImageFile(sourcePath: string): Promise<CleanedImageFile | null> {
+export async function cleanImageFile(
+  sourcePath: string,
+  sourceFingerprint: string,
+  decisions: ImageTextDecision[],
+): Promise<CleanedImageFile | null> {
   if (!isDesktop()) {
     throw new Error("Image metadata cleaning is available in the ShareGate desktop app.");
   }
-  return invoke<CleanedImageFile | null>("clean_image_file", { sourcePath });
+  return invoke<CleanedImageFile | null>("clean_image_file", {
+    sourcePath,
+    sourceFingerprint,
+    decisions,
+  });
 }

@@ -46,7 +46,6 @@ Extend the image workflow from hidden-metadata cleaning to sensitive text that i
 
 ## Acceptance evidence
 
-- Core tests cover OCR-range mapping, rectangle merging/clamping, selective redaction, PNG export, stale input rejection, and no metadata in the re-encoded image.
-- Adapter tests or desktop acceptance cover installed-language discovery and a synthetic rendered image containing supported sensitive text.
-- The packaged Windows app is exercised end to end: detect, review, redact, save, reread, rerun OCR, and verify.
-
+- Sixteen core tests cover OCR-range mapping, split-punctuation reconstruction, rectangle merging/clamping, selective redaction, PNG export, stale input rejection, and no metadata in the re-encoded image.
+- An ignored Windows adapter acceptance test uses the installed OCR language pack and requires email, private-IP, and assigned-secret findings from the synthetic rendered fixture.
+- The packaged Windows app was exercised end to end with that fixture. It found three visible-text risks, mapped the split private IP across seven OCR regions, redacted every selected region, saved a separate PNG, reread it, reran OCR, and reported zero supported findings remaining.

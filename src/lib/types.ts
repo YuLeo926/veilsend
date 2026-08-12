@@ -76,11 +76,54 @@ export interface ImageInspection {
   pixelFingerprint: string;
 }
 
+export interface ImageRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export type OcrConfidence = "notProvided";
+export type OcrAvailability = "available" | "unavailable" | "needsReview";
+
+export interface ImageTextFinding {
+  id: string;
+  ruleId: string;
+  label: string;
+  explanation: string;
+  category: Category;
+  severity: Severity;
+  maskedValue: string;
+  rectangles: ImageRect[];
+  confidence: OcrConfidence;
+}
+
+export interface OcrScanReport {
+  findings: ImageTextFinding[];
+  wordsDetected: number;
+  language: string | null;
+  confidence: OcrConfidence;
+  warnings: string[];
+}
+
+export interface ImageOcrInspection {
+  availability: OcrAvailability;
+  report: OcrScanReport | null;
+  message: string;
+}
+
+export interface ImageTextDecision {
+  id: string;
+  enabled: boolean;
+}
+
 export interface ImageSession {
   sourcePath: string;
+  sourceFingerprint: string;
   filename: string;
   previewDataUrl: string;
   inspection: ImageInspection;
+  ocr: ImageOcrInspection;
 }
 
 export interface CleanedImageFile {
@@ -89,10 +132,15 @@ export interface CleanedImageFile {
   previewDataUrl: string;
   originalBytes: number;
   cleanedSize: number;
-  removedFindings: number;
+  removedMetadataFindings: number;
+  redactedFindings: number;
+  redactedRegions: number;
+  exceptions: number;
   verification: {
-    verified: boolean;
-    remainingFindings: number;
+    status: VerificationStatus;
+    metadataRemaining: number;
+    visualFindingsRemaining: number;
+    ocrChecked: boolean;
     pixelsUnchanged: boolean;
     message: string;
   };

@@ -3,6 +3,7 @@ mod image;
 mod model;
 mod rules;
 mod sanitize;
+mod visual;
 
 use std::time::Instant;
 
@@ -12,6 +13,7 @@ pub use error::ShareGateError;
 pub use image::{DEFAULT_MAX_IMAGE_BYTES, inspect_image, sanitize_image};
 pub use model::*;
 pub use sanitize::sanitize;
+pub use visual::{map_ocr_findings, redact_image};
 
 pub fn scan(text: &str, options: ScanOptions) -> Result<ScanReport, ShareGateError> {
     if text.len() > options.max_bytes {
@@ -54,7 +56,7 @@ pub fn scan(text: &str, options: ScanOptions) -> Result<ScanReport, ShareGateErr
     })
 }
 
-pub(crate) fn fingerprint(bytes: &[u8]) -> String {
+pub fn fingerprint(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
 }
 

@@ -339,7 +339,7 @@ function App() {
           <PrivacyNote />
           <div className="scope-note">
             <span>Milestone B</span>
-            <p>Text safety plus lossless JPEG and PNG metadata cleaning.</p>
+            <p>Text safety, local image OCR, irreversible visual redaction, and metadata cleaning.</p>
           </div>
         </aside>
 

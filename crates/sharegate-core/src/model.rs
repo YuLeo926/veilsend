@@ -190,3 +190,85 @@ pub struct ImageSanitizeResult {
     pub removed_findings: usize,
     pub verification: ImageVerification,
 }
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageRect {
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct OcrWord {
+    pub text: String,
+    pub rect: ImageRect,
+    pub line_index: usize,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum OcrConfidence {
+    NotProvided,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageTextFinding {
+    pub id: String,
+    pub rule_id: String,
+    pub label: String,
+    pub explanation: String,
+    pub category: Category,
+    pub severity: Severity,
+    pub masked_value: String,
+    pub rectangles: Vec<ImageRect>,
+    pub confidence: OcrConfidence,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct OcrScanReport {
+    pub findings: Vec<ImageTextFinding>,
+    pub words_detected: usize,
+    pub language: Option<String>,
+    pub confidence: OcrConfidence,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum OcrAvailability {
+    Available,
+    Unavailable,
+    NeedsReview,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageOcrInspection {
+    pub availability: OcrAvailability,
+    pub report: Option<OcrScanReport>,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageTextDecision {
+    pub id: String,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageRedactionResult {
+    #[serde(skip_serializing, skip_deserializing)]
+    pub cleaned_bytes: Vec<u8>,
+    pub original_bytes: usize,
+    pub cleaned_size: usize,
+    pub redacted_findings: usize,
+    pub redacted_regions: usize,
+    pub exceptions: usize,
+}
