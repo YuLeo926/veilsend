@@ -8,6 +8,8 @@ use serde::Serialize;
 use sharegate_core::{DEFAULT_MAX_IMAGE_BYTES, fingerprint};
 use uuid::Uuid;
 
+use crate::image_pipeline::ReviewedVisualSnapshot;
+
 #[derive(Debug, Clone)]
 enum ImageSource {
     File { canonical_path: PathBuf },
@@ -21,6 +23,7 @@ struct StoredImageSession {
     fingerprint: String,
     filename: String,
     source_kind: ImageSourceKind,
+    reviewed: Option<ReviewedVisualSnapshot>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -44,6 +47,7 @@ pub struct ResolvedImageSession {
     pub fingerprint: String,
     pub filename: String,
     pub original_path: Option<PathBuf>,
+    pub reviewed: Option<ReviewedVisualSnapshot>,
 }
 
 #[derive(Default)]
@@ -117,7 +121,23 @@ impl ImageSessionStore {
             fingerprint: stored.fingerprint,
             filename: stored.filename,
             original_path,
+            reviewed: stored.reviewed,
         })
+    }
+
+    pub fn set_reviewed(&self, id: &str, reviewed: ReviewedVisualSnapshot) -> Result<(), String> {
+        let mut active = self
+            .0
+            .lock()
+            .map_err(|_| "The active image session could not be updated.".to_owned())?;
+        let session = active
+            .as_mut()
+            .filter(|session| session.id == id)
+            .ok_or_else(|| {
+                "This image session has expired. Choose or paste the image again.".to_owned()
+            })?;
+        session.reviewed = Some(reviewed);
+        Ok(())
     }
 
     pub fn clear(&self) -> Result<(), String> {
@@ -141,6 +161,7 @@ impl ImageSessionStore {
             fingerprint: source_fingerprint,
             filename,
             source_kind,
+            reviewed: None,
         };
         let summary = ImageSessionSummary {
             id: stored.id.clone(),

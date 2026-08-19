@@ -159,6 +159,45 @@ export interface ImageFaceInspection {
   message: string;
 }
 
+export type BarcodeKind =
+  | "code39"
+  | "code93"
+  | "code128"
+  | "codabar"
+  | "ean8"
+  | "ean13"
+  | "itf"
+  | "upcA"
+  | "upcE"
+  | "rss14"
+  | "rssExpanded"
+  | "telepen";
+export type BarcodeAvailability = "available" | "needsReview";
+
+export interface BarcodeFinding {
+  id: string;
+  kind: BarcodeKind;
+  label: string;
+  explanation: string;
+  severity: Severity;
+  maskedValue: string;
+  encodedLength: number;
+  rectangle: ImageRect;
+}
+
+export interface BarcodeScanReport {
+  findings: BarcodeFinding[];
+  symbolsDetected: number;
+  decodedSymbols: number;
+  warnings: string[];
+}
+
+export interface ImageBarcodeInspection {
+  availability: BarcodeAvailability;
+  report: BarcodeScanReport | null;
+  message: string;
+}
+
 export type ImageSourceKind = "file" | "clipboard";
 
 export interface ImageSession {
@@ -170,6 +209,7 @@ export interface ImageSession {
   ocr: ImageOcrInspection;
   faces: ImageFaceInspection;
   qr: ImageQrInspection;
+  barcodes: ImageBarcodeInspection;
 }
 
 export interface CleanedImageFile {
@@ -182,6 +222,8 @@ export interface CleanedImageFile {
   redactedFindings: number;
   redactedTextFindings: number;
   redactedQrFindings: number;
+  redactedFaceFindings: number;
+  redactedBarcodeFindings: number;
   redactedRegions: number;
   exceptions: number;
   verification: {
@@ -191,6 +233,10 @@ export interface CleanedImageFile {
     ocrChecked: boolean;
     qrCodesRemaining: number;
     qrChecked: boolean;
+    facesRemaining: number;
+    faceChecked: boolean;
+    barcodesRemaining: number;
+    barcodeChecked: boolean;
     pixelsUnchanged: boolean;
     message: string;
   };
