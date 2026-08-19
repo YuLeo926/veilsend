@@ -6,6 +6,7 @@ src-tauri/gen/schemas/
 .idea/
 .vscode/
 .playwright-cli/
+.worktrees/
 output/
 *.log
 *.cleaned.*
