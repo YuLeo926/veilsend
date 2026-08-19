@@ -428,4 +428,17 @@ mod tests {
         assert!(verification.findings.is_empty());
         assert!(verification.warnings.is_empty());
     }
+
+    #[test]
+    fn synthetic_acceptance_fixture_has_three_symbols_without_exposing_payloads() {
+        const PAYLOADS: [&str; 3] = ["SGTEST-000001", "5901234123457", "036000291452"];
+        let fixture = include_bytes!("../../../fixtures/barcode-sensitive-sample.png");
+        let report = inspect_barcodes(fixture, DEFAULT_MAX_IMAGE_BYTES).unwrap();
+        let serialized = serde_json::to_string(&report).unwrap();
+
+        assert_eq!(report.findings.len(), 3);
+        assert_eq!(report.decoded_symbols, 3);
+        assert!(report.warnings.is_empty());
+        assert!(PAYLOADS.iter().all(|payload| !serialized.contains(payload)));
+    }
 }

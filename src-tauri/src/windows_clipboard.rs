@@ -15,12 +15,12 @@ impl ClipboardAdapterError {
 }
 
 #[cfg(target_os = "windows")]
-pub fn read_png() -> Result<Vec<u8>, ClipboardAdapterError> {
-    use windows::{
-        ApplicationModel::DataTransfer::{Clipboard, StandardDataFormats},
-        Graphics::Imaging::{BitmapDecoder, BitmapEncoder},
-        Storage::Streams::{DataReader, InMemoryRandomAccessStream},
-    };
+pub type ClipboardBitmapOperation =
+    windows_future::IAsyncOperation<windows::Storage::Streams::RandomAccessStreamReference>;
+
+#[cfg(target_os = "windows")]
+pub fn begin_read() -> Result<ClipboardBitmapOperation, ClipboardAdapterError> {
+    use windows::ApplicationModel::DataTransfer::{Clipboard, StandardDataFormats};
 
     let unavailable = || {
         ClipboardAdapterError::Unavailable(
@@ -28,13 +28,6 @@ pub fn read_png() -> Result<Vec<u8>, ClipboardAdapterError> {
                 .to_owned(),
         )
     };
-    let invalid = || {
-        ClipboardAdapterError::InvalidContent(
-            "The clipboard bitmap could not be decoded safely. Copy the screenshot again and retry."
-                .to_owned(),
-        )
-    };
-
     let content = Clipboard::GetContent().map_err(|_| unavailable())?;
     let bitmap_format = StandardDataFormats::Bitmap().map_err(|_| unavailable())?;
     if !content
@@ -46,11 +39,26 @@ pub fn read_png() -> Result<Vec<u8>, ClipboardAdapterError> {
         ));
     }
 
-    let reference = content
-        .GetBitmapAsync()
-        .map_err(|_| invalid())?
-        .join()
-        .map_err(|_| invalid())?;
+    content.GetBitmapAsync().map_err(|_| unavailable())
+}
+
+#[cfg(target_os = "windows")]
+pub fn complete_read(
+    operation: ClipboardBitmapOperation,
+) -> Result<Vec<u8>, ClipboardAdapterError> {
+    use windows::{
+        Graphics::Imaging::{BitmapDecoder, BitmapEncoder},
+        Storage::Streams::{DataReader, InMemoryRandomAccessStream},
+    };
+
+    let invalid = || {
+        ClipboardAdapterError::InvalidContent(
+            "The clipboard bitmap could not be decoded safely. Copy the screenshot again and retry."
+                .to_owned(),
+        )
+    };
+
+    let reference = operation.join().map_err(|_| invalid())?;
     let input = reference
         .OpenReadAsync()
         .map_err(|_| invalid())?
@@ -111,7 +119,19 @@ pub fn read_png() -> Result<Vec<u8>, ClipboardAdapterError> {
 }
 
 #[cfg(not(target_os = "windows"))]
-pub fn read_png() -> Result<Vec<u8>, ClipboardAdapterError> {
+pub struct ClipboardBitmapOperation;
+
+#[cfg(not(target_os = "windows"))]
+pub fn begin_read() -> Result<ClipboardBitmapOperation, ClipboardAdapterError> {
+    Err(ClipboardAdapterError::Unavailable(
+        "Direct screenshot paste is currently available on Windows.".to_owned(),
+    ))
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn complete_read(
+    _operation: ClipboardBitmapOperation,
+) -> Result<Vec<u8>, ClipboardAdapterError> {
     Err(ClipboardAdapterError::Unavailable(
         "Direct screenshot paste is currently available on Windows.".to_owned(),
     ))
@@ -158,13 +178,5 @@ mod tests {
     fn requires_a_normalized_png_signature() {
         assert!(validate_png(b"\x89PNG\r\n\x1a\nbody").is_ok());
         assert!(validate_png(b"BMnot-a-png").is_err());
-    }
-
-    #[cfg(target_os = "windows")]
-    #[test]
-    #[ignore = "requires a bitmap already present in the interactive Windows clipboard"]
-    fn reads_the_existing_clipboard_without_mutating_it() {
-        let png = read_png().expect("place a bitmap in the clipboard before running this test");
-        validate_png(&png).unwrap();
     }
 }

@@ -35,3 +35,4 @@ windows = { version = "0.62.2", features = [
     "Media_Ocr",
     "Storage_Streams",
 ] }
+windows-future = "=0.3.2"

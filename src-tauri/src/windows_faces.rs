@@ -274,4 +274,16 @@ mod tests {
         assert_eq!(inspection.findings[0].label, "Face");
         assert!(!serde_json::to_string(&inspection).unwrap().contains("crop"));
     }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    #[ignore = "requires Windows local face detection support on the test machine"]
+    fn recognizes_the_synthetic_acceptance_fixture() {
+        let rectangles = detect(include_bytes!("../../fixtures/visual-sensitive-sample.png"))
+            .expect("Windows face detection should be available for the acceptance fixture");
+
+        assert_eq!(rectangles.len(), 1);
+        assert!(rectangles[0].width > 100);
+        assert!(rectangles[0].height > 100);
+    }
 }

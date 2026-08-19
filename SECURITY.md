@@ -14,20 +14,20 @@ The current `main` branch is a pre-release foundation. There are no supported pu
 
 ## Threat model for v0.1
 
-ShareGate aims to reduce accidental disclosure while a user prepares local text or images for sharing. It protects against common, recognizable secret and PII patterns in supported text, applies those rules to locally recognized image text, locates QR codes, irreversibly covers user-selected regions, and removes supported privacy metadata from JPEG and PNG copies.
+ShareGate aims to reduce accidental disclosure while a user prepares local text, screenshots, or images for sharing. It protects against common, recognizable secret and PII patterns in supported text, applies those rules to locally recognized image text, locates faces, QR codes, and supported one-dimensional barcodes, irreversibly covers user-selected regions, and removes supported privacy metadata from JPEG and PNG copies.
 
 It does not protect against:
 
 - secrets that do not match an enabled detector;
 - visible text that Windows OCR misreads or does not recognize;
-- faces, signatures by shape, handwriting beyond installed OCR capability, one-dimensional barcodes, QR codes the current detector cannot locate, or other visual identifiers;
+- faces the Windows detector misses, identity conveyed outside the detected rectangle, signatures by shape, handwriting beyond installed OCR capability, undecodable bar patterns, unsupported barcode formats, codes the current detectors cannot locate, or other visual identifiers;
 - metadata formats or non-standard blocks that cannot be parsed by the current image engine;
 - malicious files or compromised operating systems;
-- screen capture, clipboard monitoring, or another process reading memory;
+- screen capture, clipboard monitoring by another process, or another process reading memory;
 - deliberate disclosure by the local user;
 - compliance, legal, or regulatory requirements.
 
-The application must never describe an output as universally safe. For text, `Verified` means the completed post-clean scan found no matches from enabled ShareGate rules. For metadata-only images, it means supported privacy metadata was absent and the encoded pixel stream matched the source fingerprint. For visually redacted images, it means the saved PNG had no supported metadata findings, a second Windows OCR pass found no enabled ShareGate rule matches, and a second QR pass found no supported QR-like code. Windows OCR supplies no confidence score, so the interface must never invent one.
+The application must never describe an output as universally safe. For text, `Verified` means the completed post-clean scan found no matches from enabled ShareGate rules. For metadata-only images, it means supported privacy metadata was absent and the encoded pixel stream matched the source fingerprint. For visually redacted images, it means the saved PNG had no supported metadata findings and completed second passes found no unexpected sensitive text, face, QR, or supported one-dimensional barcode. Windows OCR and the selected face path do not provide an application-facing confidence score, so the interface must never invent one.
 
 ## Development rules
 
@@ -39,5 +39,10 @@ The application must never describe an output as universally safe. For text, `Ve
 - Preserve the source file and fail closed when image orientation or metadata cannot be interpreted safely.
 - Keep complete OCR text inside the Rust desktop process; return only masked findings and required review rectangles to the interface.
 - Keep decoded QR payload bytes inside the Rust core; return only coarse classification, byte count, and required review geometry to the interface.
+- Keep face processing location-only; do not serialize a face crop, biometric embedding, identity, or inferred personal attribute.
+- Keep decoded barcode payloads inside the Rust core; return only the supported format, encoded length, opaque ID, and required review geometry.
+- Access the Windows clipboard only after a focused user action. Do not poll, monitor, clear, or write clipboard history, and do not persist pasted source bytes to a temporary file.
 - Recompute OCR findings from the unchanged source at export time instead of trusting finding geometry returned by the interface.
 - Recompute QR findings from the unchanged source at export time and fail visibly if extraction is incomplete.
+- Recompute face and barcode findings from the unchanged source at export time and require an explicit decision for every reviewed visual finding.
+- Reread the actual saved destination and require metadata, OCR, face, QR, and barcode checks to complete before reporting `Verified`.

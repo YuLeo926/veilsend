@@ -129,12 +129,24 @@ async fn pick_image(
 }
 
 #[tauri::command]
-async fn paste_image(state: tauri::State<'_, ImageSessionStore>) -> Result<ImageSession, String> {
+async fn paste_image(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, ImageSessionStore>,
+) -> Result<ImageSession, String> {
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    app.run_on_main_thread(move || {
+        let result = windows_clipboard::begin_read().map_err(|error| error.into_message());
+        let _ = sender.send(result);
+    })
+    .map_err(|error| format!("The clipboard check could not be started: {error}"))?;
     let bytes = tauri::async_runtime::spawn_blocking(move || {
-        windows_clipboard::read_png().map_err(|error| error.into_message())
+        let operation = receiver
+            .recv()
+            .map_err(|_| "The clipboard check ended before returning an image.".to_owned())??;
+        windows_clipboard::complete_read(operation).map_err(|error| error.into_message())
     })
     .await
-    .map_err(|error| format!("The clipboard check could not be started: {error}"))??;
+    .map_err(|error| format!("The clipboard check could not finish: {error}"))??;
     let summary = state.replace_clipboard(bytes)?;
     let resolved = state.resolve(&summary.id)?;
     let (session, reviewed) = build_image_session(summary, &resolved.bytes)?;
