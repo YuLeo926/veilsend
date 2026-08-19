@@ -3446,6 +3446,7 @@ dependencies = [
  "base64 0.22.1",
  "rfd",
  "serde",
+ "serde_json",
  "sharegate-core",
  "tauri",
  "tauri-build",

@@ -371,6 +371,32 @@ pub struct ImageBarcodeInspection {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct FaceFinding {
+    pub id: String,
+    pub label: String,
+    pub explanation: String,
+    pub severity: Severity,
+    pub rectangle: ImageRect,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum FaceAvailability {
+    Available,
+    Unavailable,
+    NeedsReview,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageFaceInspection {
+    pub availability: FaceAvailability,
+    pub findings: Vec<FaceFinding>,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct ImageRedactionResult {
     #[serde(skip_serializing, skip_deserializing)]
     pub cleaned_bytes: Vec<u8>,

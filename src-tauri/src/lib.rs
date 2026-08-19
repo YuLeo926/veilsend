@@ -6,13 +6,14 @@ use std::{
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde::Serialize;
 use sharegate_core::{
-    DEFAULT_MAX_IMAGE_BYTES, ImageFormat, ImageInspection, ImageOcrInspection, ImageQrInspection,
-    ImageRedactionDecision, ImageRedactionTarget, OcrAvailability, QrAvailability, SanitizeRequest,
-    SanitizeResult, ScanOptions, ScanReport, ShareGateError, VerificationStatus, fingerprint,
-    inspect_image, inspect_qr_codes, map_ocr_findings, redact_image, sanitize, sanitize_image,
-    scan,
+    DEFAULT_MAX_IMAGE_BYTES, ImageFaceInspection, ImageFormat, ImageInspection, ImageOcrInspection,
+    ImageQrInspection, ImageRedactionDecision, ImageRedactionTarget, OcrAvailability,
+    QrAvailability, SanitizeRequest, SanitizeResult, ScanOptions, ScanReport, ShareGateError,
+    VerificationStatus, fingerprint, inspect_image, inspect_qr_codes, map_ocr_findings,
+    redact_image, sanitize, sanitize_image, scan,
 };
 
+mod windows_faces;
 mod windows_ocr;
 
 #[derive(Debug, Serialize)]
@@ -24,6 +25,7 @@ struct ImageSession {
     preview_data_url: String,
     inspection: ImageInspection,
     ocr: ImageOcrInspection,
+    faces: ImageFaceInspection,
     qr: ImageQrInspection,
 }
 
@@ -319,6 +321,7 @@ fn load_image_session(path: &Path) -> Result<ImageSession, String> {
     let bytes = read_image(path)?;
     let inspection = inspect_image(&bytes, DEFAULT_MAX_IMAGE_BYTES).map_err(format_core_error)?;
     let ocr = inspect_visible_text(&bytes);
+    let faces = windows_faces::inspect(&bytes);
     let qr = inspect_qr(&bytes);
     let extension = match inspection.format {
         ImageFormat::Jpeg => "jpg",
@@ -335,6 +338,7 @@ fn load_image_session(path: &Path) -> Result<ImageSession, String> {
         preview_data_url: data_url(extension, &bytes),
         inspection,
         ocr,
+        faces,
         qr,
     })
 }
