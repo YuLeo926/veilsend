@@ -1,11 +1,13 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
   ArrowLeft,
+  Barcode,
   Camera,
   Check,
   CheckCircle2,
   Clock3,
+  ClipboardPaste,
   FileQuestion,
   Fingerprint,
   FolderOpen,
@@ -16,11 +18,24 @@ import {
   MessageSquareText,
   QrCode,
   RefreshCcw,
+  ScanFace,
   ScanLine,
   ShieldCheck,
   UserRound,
 } from "lucide-react";
-import { cleanImageFile, isDesktop, pickImage } from "../lib/bridge";
+import {
+  cleanImageFile,
+  clearImageSession,
+  isDesktop,
+  pasteImage,
+  pickImage,
+} from "../lib/bridge";
+import {
+  buildDefaultDecisions,
+  buildVisualFindings,
+  isImagePasteShortcut,
+  remainingRiskCount,
+} from "../lib/imageWorkflowModel";
 import type {
   Category,
   CleanedImageFile,
@@ -91,37 +106,74 @@ export function ImageWorkflow({
   const [busy, setBusy] = useState(false);
 
   const textFindings = session?.ocr.report?.findings ?? [];
+  const faceFindings = session?.faces.findings ?? [];
   const qrFindings = session?.qr.report?.findings ?? [];
+  const barcodeFindings = session?.barcodes.report?.findings ?? [];
   const visualFindings = useMemo(
-    () => [
-      ...textFindings.map((finding) => ({ id: finding.id, rectangles: finding.rectangles, type: "text" as const })),
-      ...qrFindings.map((finding) => ({ id: finding.id, rectangles: [finding.rectangle], type: "qr" as const })),
-    ],
-    [qrFindings, textFindings],
+    () => session ? buildVisualFindings(session) : [],
+    [session],
+  );
+  const findingNumber = useMemo(
+    () => new Map(visualFindings.map((finding, index) => [finding.id, index + 1])),
+    [visualFindings],
   );
   const selectedVisualCount = useMemo(
     () => visualFindings.filter((finding) => decisions[finding.id]?.enabled !== false).length,
     [decisions, visualFindings],
   );
 
+  useEffect(() => {
+    if (!isDesktop()) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (
+        !busy
+        && (event.ctrlKey || event.metaKey)
+        && event.key.toLowerCase() === "v"
+        && isImagePasteShortcut(event.target, stage)
+      ) {
+        event.preventDefault();
+        void pasteScreenshot();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [busy, stage]);
+
+  function acceptSession(nextSession: ImageSession) {
+    setSession(nextSession);
+    setDecisions(buildDefaultDecisions(nextSession));
+    setResult(null);
+    onStageChange("review");
+  }
+
+  async function clearCurrentSession() {
+    if (!session) return;
+    await clearImageSession();
+    setSession(null);
+    setDecisions({});
+  }
+
   async function chooseImage() {
     setBusy(true);
     onError("");
     try {
+      await clearCurrentSession();
       const nextSession = await pickImage();
       if (!nextSession) return;
-      setSession(nextSession);
-      setDecisions(Object.fromEntries(
-        [
-          ...(nextSession.ocr.report?.findings ?? []),
-          ...(nextSession.qr.report?.findings ?? []),
-        ].map((finding) => [finding.id, {
-          id: finding.id,
-          enabled: true,
-        }]),
-      ));
-      setResult(null);
-      onStageChange("review");
+      acceptSession(nextSession);
+    } catch (error) {
+      onError(readableError(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function pasteScreenshot() {
+    setBusy(true);
+    onError("");
+    try {
+      await clearCurrentSession();
+      acceptSession(await pasteImage());
     } catch (error) {
       onError(readableError(error));
     } finally {
@@ -148,52 +200,79 @@ export function ImageWorkflow({
     }
   }
 
-  function startAgain() {
-    setSession(null);
-    setResult(null);
-    setDecisions({});
-    onError("");
-    onStageChange("add");
+  async function startAgain() {
+    let clearError = "";
+    try {
+      await clearCurrentSession();
+    } catch (error) {
+      clearError = readableError(error);
+    } finally {
+      setResult(null);
+      onError(clearError);
+      onStageChange("add");
+    }
+  }
+
+  async function switchToText() {
+    try {
+      await clearCurrentSession();
+      onError("");
+    } catch (error) {
+      onError(readableError(error));
+    } finally {
+      onSwitchToText();
+    }
   }
 
   if (stage === "add") {
     return (
       <section className="stage-view add-stage image-add-stage">
-        <InputModeTabs active="image" onChange={(mode) => mode === "text" && onSwitchToText()} />
-        <div className="eyebrow"><Fingerprint size={15} /> Visible text + QR + hidden metadata</div>
+        <InputModeTabs active="image" onChange={(mode) => mode === "text" && void switchToText()} />
+        <div className="eyebrow"><Fingerprint size={15} /> Five local image checks</div>
         <h1>Find what the image<br />should not reveal.</h1>
-        <p className="lead">Choose a JPEG or PNG. ShareGate checks visible credentials, QR codes, location, device identity, time, and hidden image metadata—all locally.</p>
+        <p className="lead">Choose a JPEG or PNG, or paste a screenshot. ShareGate checks visible text, faces, QR codes, one-dimensional barcodes, and hidden metadata—all locally.</p>
 
         <div className="image-picker-card">
           <div className="image-picker-visual" aria-hidden="true">
             <div className="photo-sheet photo-sheet-back" />
             <div className="photo-sheet">
               <ImageIcon size={44} />
-              <span>OCR</span><span>QR</span><span>EXIF</span>
+              <span>TEXT</span><span>FACE</span><span>CODE</span>
             </div>
             <div className="metadata-sweep"><ShieldCheck size={28} /></div>
           </div>
           <div className="image-picker-copy">
             <span className="local-label"><LockKeyhole size={14} /> Opened and scanned locally</span>
             <h2>Inspect one image</h2>
-            <p>JPEG or PNG, up to 25 MB. The original is never overwritten. Visible redactions are exported as a new PNG; metadata-only cleaning preserves the encoded pixel stream.</p>
-            <button
-              className="primary-button image-choose-button"
-              type="button"
-              disabled={busy || !isDesktop()}
-              onClick={() => void chooseImage()}
-            >
-              {busy ? <LoaderCircle className="spin" size={18} /> : <FolderOpen size={18} />}
-              Choose image
-            </button>
+            <p>JPEG or PNG, up to 25 MB. The original and clipboard stay untouched. Reviewable regions are rewritten into a separate PNG; raw code payloads and face crops are never shown.</p>
+            <div className="image-intake-actions">
+              <button
+                className="primary-button image-choose-button"
+                type="button"
+                disabled={busy || !isDesktop()}
+                onClick={() => void chooseImage()}
+              >
+                {busy ? <LoaderCircle className="spin" size={18} /> : <FolderOpen size={18} />}
+                Choose image
+              </button>
+              <button
+                className="secondary-button paste-screenshot-button"
+                type="button"
+                disabled={busy || !isDesktop()}
+                onClick={() => void pasteScreenshot()}
+              >
+                <ClipboardPaste size={18} />
+                Paste screenshot <kbd>Ctrl V</kbd>
+              </button>
+            </div>
             {!isDesktop() && <div className="desktop-only-note">Image checks and cleaning run in the Windows desktop app. The browser preview keeps this control disabled.</div>}
           </div>
         </div>
 
         <div className="trust-row">
           <span><LockKeyhole size={15} /> No upload</span>
-          <span><ScanLine size={15} /> Windows OCR on-device</span>
-          <span><QrCode size={15} /> QR decoded locally</span>
+          <span><ScanFace size={15} /> Faces located, never identified</span>
+          <span><Barcode size={15} /> Code payloads stay hidden</span>
           <span><RefreshCcw size={15} /> Saved copy rechecked</span>
         </div>
       </section>
@@ -201,7 +280,7 @@ export function ImageWorkflow({
   }
 
   if (stage === "review" && session) {
-    const { inspection, ocr, qr } = session;
+    const { inspection, ocr, faces, qr, barcodes } = session;
     const totalFindings = inspection.findings.length + visualFindings.length;
     const imageWidth = inspection.width ?? 1;
     const imageHeight = inspection.height ?? 1;
@@ -213,7 +292,7 @@ export function ImageWorkflow({
           <div>
             <div className="eyebrow"><ScanLine size={15} /> Image safety review</div>
             <h1>{totalFindings ? `${totalFindings} risk${totalFindings === 1 ? "" : "s"} found.` : "No supported risks found."}</h1>
-            <p>{totalFindings ? "Visible-text and QR regions are selected for irreversible pixel redaction. Hidden metadata is always removed from the separate copy." : "ShareGate can still make a separate copy and repeat all three checks before reporting a result."}</p>
+            <p>{totalFindings ? "Text, face, QR, and barcode regions start selected for opaque pixel redaction. Hidden metadata is always removed from the separate copy." : "ShareGate can still make a separate copy and repeat all five checks before reporting a result."}</p>
           </div>
           <div className="scan-receipt">
             <span>IMAGE RECEIPT</span>
@@ -229,21 +308,46 @@ export function ImageWorkflow({
           </div>
         ))}
 
-        <div className={`ocr-status ${ocr.availability}`}>
-          {ocr.availability === "available" ? <ScanLine size={19} /> : <AlertTriangle size={19} />}
-          <div>
-            <strong>{ocr.availability === "available" ? "Local visible-text check complete" : "Visible text needs manual review"}</strong>
-            <span>{ocr.message}</span>
-            {ocr.report && <small>{ocr.report.language ?? "System language"} · Confidence score unavailable from Windows OCR</small>}
+        <div className="detector-status-grid">
+          <div className={`ocr-status ${ocr.availability}`}>
+            {ocr.availability === "available" ? <ScanLine size={19} /> : <AlertTriangle size={19} />}
+            <div>
+              <strong>{ocr.availability === "available" ? "Visible text checked" : "Text needs review"}</strong>
+              <span>{ocr.message}</span>
+              {ocr.report && <small>{ocr.report.language ?? "System language"} · Confidence not supplied</small>}
+            </div>
           </div>
-        </div>
-
-        <div className={`ocr-status qr-status ${qr.availability}`}>
-          {qr.availability === "available" ? <QrCode size={19} /> : <AlertTriangle size={19} />}
-          <div>
-            <strong>{qr.availability === "available" ? "Local QR check complete" : "QR codes need manual review"}</strong>
-            <span>{qr.message}</span>
-            <small>Decoded payloads stay inside the Rust core and are never shown in the interface.</small>
+          <div className={`ocr-status face-status ${faces.availability}`}>
+            {faces.availability === "available" ? <ScanFace size={19} /> : <AlertTriangle size={19} />}
+            <div>
+              <strong>{faces.availability === "available" ? "Faces checked" : "Faces need review"}</strong>
+              <span>{faces.message}</span>
+              <small>Location only—no identity, age, or personal attributes inferred.</small>
+            </div>
+          </div>
+          <div className={`ocr-status qr-status ${qr.availability}`}>
+            {qr.availability === "available" ? <QrCode size={19} /> : <AlertTriangle size={19} />}
+            <div>
+              <strong>{qr.availability === "available" ? "QR codes checked" : "QR codes need review"}</strong>
+              <span>{qr.message}</span>
+              <small>Decoded payloads stay inside the local Rust core.</small>
+            </div>
+          </div>
+          <div className={`ocr-status barcode-status ${barcodes.availability}`}>
+            {barcodes.availability === "available" ? <Barcode size={19} /> : <AlertTriangle size={19} />}
+            <div>
+              <strong>{barcodes.availability === "available" ? "Barcodes checked" : "Barcodes need review"}</strong>
+              <span>{barcodes.message}</span>
+              <small>Only format and encoded character count are shown.</small>
+            </div>
+          </div>
+          <div className="ocr-status metadata-status available">
+            <Fingerprint size={19} />
+            <div>
+              <strong>Hidden metadata checked</strong>
+              <span>{inspection.findings.length ? `${inspection.findings.length} removable metadata risk(s) found.` : "No removable location, device, identity, time, or description metadata found."}</span>
+              <small>Metadata is always removed from the separate copy.</small>
+            </div>
           </div>
         </div>
 
@@ -255,7 +359,7 @@ export function ImageWorkflow({
                 <div className="redaction-overlay" aria-hidden="true">
                   {visualFindings.flatMap((finding, findingIndex) => finding.rectangles.map((rect, rectIndex) => (
                     <span
-                      className={`redaction-region ${finding.type === "qr" ? "qr-region" : ""} ${decisions[finding.id]?.enabled === false ? "excluded" : "selected"}`}
+                      className={`redaction-region ${finding.type}-region ${decisions[finding.id]?.enabled === false ? "excluded" : "selected"}`}
                       key={`${finding.id}-${rectIndex}`}
                       style={{
                         left: `${(rect.x / imageWidth) * 100}%`,
@@ -272,24 +376,24 @@ export function ImageWorkflow({
             </div>
             <div className="image-preview-meta">
               <strong>{session.filename}</strong>
-              <span>{inspection.format.toUpperCase()} · {inspection.width} × {inspection.height}</span>
+              <span>{session.sourceKind === "clipboard" ? "Pasted screenshot" : "Selected file"} · {inspection.format.toUpperCase()} · {inspection.width} × {inspection.height}</span>
             </div>
             <div className="pixel-promise">
               <Check size={14} />
-              {visualFindings.length ? "Selected regions will be rewritten in a new PNG" : "Encoded pixels remain byte-for-byte unchanged"}
+              {visualFindings.length ? "Selected regions will receive opaque coverage in a new PNG" : "No visual rewrite selected; metadata cleaning preserves pixels"}
             </div>
           </aside>
 
           <div className="image-findings-column">
             {!!textFindings.length && <div className="image-finding-section"><span>Visible text</span><b>{textFindings.length}</b></div>}
-            {textFindings.map((finding, index) => {
+            {textFindings.map((finding) => {
               const selected = decisions[finding.id]?.enabled !== false;
               return (
                 <article className={`metadata-card visual-finding severity-${finding.severity} ${selected ? "selected" : "excluded"}`} key={finding.id}>
                   <span className="metadata-icon"><ScanLine size={18} /></span>
                   <div>
                     <div className="metadata-heading">
-                      <strong>{index + 1}. {finding.label}</strong>
+                      <strong>{findingNumber.get(finding.id)}. {finding.label}</strong>
                       <span className={`severity-pill ${finding.severity}`}>{severityLabel[finding.severity]}</span>
                     </div>
                     <small>{visibleCategoryLabel[finding.category]} · {finding.rectangles.length} region{finding.rectangles.length === 1 ? "" : "s"}</small>
@@ -313,21 +417,85 @@ export function ImageWorkflow({
               );
             })}
 
+            {!!faceFindings.length && <div className="image-finding-section face-section"><span>Faces</span><b>{faceFindings.length}</b></div>}
+            {faceFindings.map((finding) => {
+              const selected = decisions[finding.id]?.enabled !== false;
+              return (
+                <article className={`metadata-card visual-finding face-finding severity-${finding.severity} ${selected ? "selected" : "excluded"}`} key={finding.id}>
+                  <span className="metadata-icon"><ScanFace size={18} /></span>
+                  <div>
+                    <div className="metadata-heading">
+                      <strong>{findingNumber.get(finding.id)}. {finding.label}</strong>
+                      <span className={`severity-pill ${finding.severity}`}>{severityLabel[finding.severity]}</span>
+                    </div>
+                    <small>Visible identity cue · location only</small>
+                    <p>{finding.explanation}</p>
+                    <code>Face region · crop not stored</code>
+                    <span className="confidence-note">No identity, age, emotion, or personal attributes inferred</span>
+                  </div>
+                  <button
+                    className={`visual-decision ${selected ? "selected" : ""}`}
+                    type="button"
+                    aria-pressed={selected}
+                    onClick={() => setDecisions((current) => ({
+                      ...current,
+                      [finding.id]: { id: finding.id, enabled: !selected },
+                    }))}
+                  >
+                    {selected && <Check size={12} />}
+                    {selected ? "Redact" : "Keep"}
+                  </button>
+                </article>
+              );
+            })}
+
             {!!qrFindings.length && <div className="image-finding-section qr-section"><span>QR codes</span><b>{qrFindings.length}</b></div>}
-            {qrFindings.map((finding, index) => {
+            {qrFindings.map((finding) => {
               const selected = decisions[finding.id]?.enabled !== false;
               return (
                 <article className={`metadata-card visual-finding qr-finding severity-${finding.severity} ${selected ? "selected" : "excluded"}`} key={finding.id}>
                   <span className="metadata-icon"><QrCode size={18} /></span>
                   <div>
                     <div className="metadata-heading">
-                      <strong>{textFindings.length + index + 1}. {finding.label}</strong>
+                      <strong>{findingNumber.get(finding.id)}. {finding.label}</strong>
                       <span className={`severity-pill ${finding.severity}`}>{severityLabel[finding.severity]}</span>
                     </div>
                     <small>Machine-readable region · payload hidden</small>
                     <p>{finding.explanation}</p>
                     <code>{finding.maskedValue}</code>
                     <span className="confidence-note">Content never leaves the local Rust scanner</span>
+                  </div>
+                  <button
+                    className={`visual-decision ${selected ? "selected" : ""}`}
+                    type="button"
+                    aria-pressed={selected}
+                    onClick={() => setDecisions((current) => ({
+                      ...current,
+                      [finding.id]: { id: finding.id, enabled: !selected },
+                    }))}
+                  >
+                    {selected && <Check size={12} />}
+                    {selected ? "Redact" : "Keep"}
+                  </button>
+                </article>
+              );
+            })}
+
+            {!!barcodeFindings.length && <div className="image-finding-section barcode-section"><span>One-dimensional barcodes</span><b>{barcodeFindings.length}</b></div>}
+            {barcodeFindings.map((finding) => {
+              const selected = decisions[finding.id]?.enabled !== false;
+              return (
+                <article className={`metadata-card visual-finding barcode-finding severity-${finding.severity} ${selected ? "selected" : "excluded"}`} key={finding.id}>
+                  <span className="metadata-icon"><Barcode size={18} /></span>
+                  <div>
+                    <div className="metadata-heading">
+                      <strong>{findingNumber.get(finding.id)}. {finding.label}</strong>
+                      <span className={`severity-pill ${finding.severity}`}>{severityLabel[finding.severity]}</span>
+                    </div>
+                    <small>Machine-readable region · payload hidden</small>
+                    <p>{finding.explanation}</p>
+                    <code>{finding.maskedValue}</code>
+                    <span className="confidence-note">No checksum digit, prefix, suffix, or partial payload is shown</span>
                   </div>
                   <button
                     className={`visual-decision ${selected ? "selected" : ""}`}
@@ -370,7 +538,7 @@ export function ImageWorkflow({
               <div className="empty-findings compact">
                 <ShieldCheck size={28} />
                 <strong>No supported risks detected</strong>
-                <p>The saved copy will still be checked again. OCR, QR, and metadata coverage is limited, so read the image once before sharing.</p>
+                <p>The saved copy will still be checked again. Text, face, QR, barcode, and metadata detectors can miss unusual content, so read the image once before sharing.</p>
               </div>
             )}
 
@@ -407,7 +575,7 @@ export function ImageWorkflow({
           <div className="verification-ticket">
             <span>SHAREGATE CHECK</span>
             <strong>{passed ? "PASSED" : "REVIEW"}</strong>
-            <small>{result.verification.metadataRemaining + result.verification.visualFindingsRemaining + result.verification.qrCodesRemaining} supported risks remain</small>
+            <small>{remainingRiskCount(result)} supported risks remain</small>
           </div>
         </div>
 
@@ -420,7 +588,9 @@ export function ImageWorkflow({
             </div>
             <div className="verification-facts">
               <div><CheckCircle2 size={18} /><span><strong>{result.redactedTextFindings}</strong> visible-text risks redacted</span></div>
+              <div><CheckCircle2 size={18} /><span><strong>{result.redactedFaceFindings}</strong> face regions redacted</span></div>
               <div><CheckCircle2 size={18} /><span><strong>{result.redactedQrFindings}</strong> QR risks redacted</span></div>
+              <div><CheckCircle2 size={18} /><span><strong>{result.redactedBarcodeFindings}</strong> barcode risks redacted</span></div>
               <div><CheckCircle2 size={18} /><span><strong>{result.removedMetadataFindings}</strong> metadata risks removed</span></div>
               <div className={result.verification.ocrChecked ? "" : "fact-review"}>
                 {result.verification.ocrChecked ? <CheckCircle2 size={18} /> : <AlertTriangle size={18} />}
@@ -430,6 +600,18 @@ export function ImageWorkflow({
                 {result.verification.qrChecked ? <CheckCircle2 size={18} /> : <AlertTriangle size={18} />}
                 <span><strong>{result.verification.qrChecked ? "Complete" : "Review"}</strong> saved-file QR check</span>
               </div>
+              <div className={result.verification.faceChecked ? "" : "fact-review"}>
+                {result.verification.faceChecked ? <CheckCircle2 size={18} /> : <AlertTriangle size={18} />}
+                <span><strong>{result.verification.faceChecked ? "Complete" : "Review"}</strong> saved-file face check</span>
+              </div>
+              <div className={result.verification.barcodeChecked ? "" : "fact-review"}>
+                {result.verification.barcodeChecked ? <CheckCircle2 size={18} /> : <AlertTriangle size={18} />}
+                <span><strong>{result.verification.barcodeChecked ? "Complete" : "Review"}</strong> saved-file barcode check</span>
+              </div>
+              <div className={remainingRiskCount(result) ? "fact-review remaining-risk-fact" : "remaining-risk-fact"}>
+                {remainingRiskCount(result) ? <AlertTriangle size={18} /> : <CheckCircle2 size={18} />}
+                <span><strong>{remainingRiskCount(result)}</strong> remain · metadata {result.verification.metadataRemaining}, text {result.verification.visualFindingsRemaining}, faces {result.verification.facesRemaining}, QR {result.verification.qrCodesRemaining}, barcodes {result.verification.barcodesRemaining}</span>
+              </div>
               <div><CheckCircle2 size={18} /><span><strong>{result.redactedFindings ? "Rewritten" : result.verification.pixelsUnchanged ? "Exact" : "Changed"}</strong> output pixels</span></div>
             </div>
             {result.exceptions > 0 && <div className="exception-result"><AlertTriangle size={14} /> {result.exceptions} visual finding{result.exceptions === 1 ? " was" : "s were"} deliberately kept.</div>}
@@ -438,8 +620,8 @@ export function ImageWorkflow({
         </div>
 
         <div className="result-footer">
-          <button className="text-button" type="button" onClick={startAgain}><RefreshCcw size={15} /> Check another image</button>
-          <p><AlertTriangle size={14} /> OCR, QR, and metadata checks reduce accidental exposure; they cannot prove an image contains no sensitive information.</p>
+          <button className="text-button" type="button" onClick={() => void startAgain()}><RefreshCcw size={15} /> Check another image</button>
+          <p><AlertTriangle size={14} /> Text, face, QR, barcode, and metadata checks reduce accidental exposure; they cannot prove an image is safe.</p>
         </div>
       </section>
     );

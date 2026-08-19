@@ -338,8 +338,8 @@ function App() {
           <StepRail stage={stage} />
           <PrivacyNote />
           <div className="scope-note">
-            <span>Milestone B</span>
-            <p>Text safety, local image OCR, QR redaction, and metadata cleaning.</p>
+            <span>Milestone C</span>
+            <p>Text safety plus local image text, face, QR, barcode, and metadata review.</p>
           </div>
         </aside>
 
