@@ -1,6 +1,6 @@
 use std::{
-    io::Read,
-    path::{Path, PathBuf},
+    io::{Cursor, Read},
+    path::Path,
 };
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
@@ -13,14 +13,18 @@ use sharegate_core::{
     redact_image, sanitize, sanitize_image, scan,
 };
 
+mod image_sessions;
+mod windows_clipboard;
 mod windows_faces;
 mod windows_ocr;
+
+use image_sessions::{ImageSessionStore, ImageSessionSummary, ImageSourceKind};
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ImageSession {
-    source_path: String,
-    source_fingerprint: String,
+    session_id: String,
+    source_kind: ImageSourceKind,
     filename: String,
     preview_data_url: String,
     inspection: ImageInspection,
@@ -92,32 +96,52 @@ async fn save_cleaned_text(
 }
 
 #[tauri::command]
-async fn pick_image() -> Result<Option<ImageSession>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+async fn pick_image(
+    state: tauri::State<'_, ImageSessionStore>,
+) -> Result<Option<ImageSession>, String> {
+    let path = tauri::async_runtime::spawn_blocking(move || {
         let path = rfd::FileDialog::new()
             .add_filter("JPEG and PNG images", &["jpg", "jpeg", "png"])
             .pick_file();
-        let Some(path) = path else {
-            return Ok(None);
-        };
-        load_image_session(&path).map(Some)
+        Ok::<_, String>(path)
     })
     .await
-    .map_err(|error| format!("The image picker could not be opened: {error}"))?
+    .map_err(|error| format!("The image picker could not be opened: {error}"))??;
+    let Some(path) = path else {
+        return Ok(None);
+    };
+    let summary = state.replace_file(&path)?;
+    let resolved = state.resolve(&summary.id)?;
+    build_image_session(summary, &resolved.bytes).map(Some)
+}
+
+#[tauri::command]
+async fn paste_image(state: tauri::State<'_, ImageSessionStore>) -> Result<ImageSession, String> {
+    let bytes = tauri::async_runtime::spawn_blocking(move || {
+        windows_clipboard::read_png().map_err(|error| error.into_message())
+    })
+    .await
+    .map_err(|error| format!("The clipboard check could not be started: {error}"))??;
+    let summary = state.replace_clipboard(bytes)?;
+    let resolved = state.resolve(&summary.id)?;
+    build_image_session(summary, &resolved.bytes)
+}
+
+#[tauri::command]
+fn clear_image_session(state: tauri::State<'_, ImageSessionStore>) -> Result<(), String> {
+    state.clear()
 }
 
 #[tauri::command]
 async fn clean_image_file(
-    source_path: String,
-    source_fingerprint: String,
+    session_id: String,
     decisions: Vec<ImageRedactionDecision>,
+    state: tauri::State<'_, ImageSessionStore>,
 ) -> Result<Option<CleanedImageFile>, String> {
+    let resolved = state.resolve(&session_id)?;
     tauri::async_runtime::spawn_blocking(move || {
-        let source = PathBuf::from(source_path);
-        let input = read_image(&source)?;
-        if fingerprint(&input) != source_fingerprint {
-            return Err(ShareGateError::StaleContent.to_string());
-        }
+        let input = resolved.bytes;
+        let source_fingerprint = resolved.fingerprint;
         let source_inspection =
             inspect_image(&input, DEFAULT_MAX_IMAGE_BYTES).map_err(format_core_error)?;
         let ocr_before = inspect_visible_text(&input);
@@ -199,10 +223,7 @@ async fn clean_image_file(
             ));
         }
 
-        let original_name = source
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("image.png");
+        let original_name = resolved.filename.as_str();
         let (default_name, extension) = if has_visual_review {
             (redacted_image_name(original_name), "png")
         } else {
@@ -219,7 +240,11 @@ async fn clean_image_file(
         let Some(output) = output else {
             return Ok(None);
         };
-        if same_path(&source, &output) {
+        if resolved
+            .original_path
+            .as_deref()
+            .is_some_and(|source| same_path(source, &output))
+        {
             return Err("ShareGate never overwrites the original image. Choose a different filename for the clean copy.".to_owned());
         }
 
@@ -317,34 +342,24 @@ async fn clean_image_file(
     .map_err(|error| format!("The image cleaner could not be started: {error}"))?
 }
 
-fn load_image_session(path: &Path) -> Result<ImageSession, String> {
-    let bytes = read_image(path)?;
-    let inspection = inspect_image(&bytes, DEFAULT_MAX_IMAGE_BYTES).map_err(format_core_error)?;
-    let ocr = inspect_visible_text(&bytes);
-    let faces = windows_faces::inspect(&bytes);
-    let qr = inspect_qr(&bytes);
-    let extension = match inspection.format {
-        ImageFormat::Jpeg => "jpg",
-        ImageFormat::Png => "png",
-    };
+fn build_image_session(summary: ImageSessionSummary, bytes: &[u8]) -> Result<ImageSession, String> {
+    if fingerprint(bytes) != summary.fingerprint {
+        return Err("The source image changed while its review session was opening.".to_owned());
+    }
+    let inspection = inspect_image(bytes, DEFAULT_MAX_IMAGE_BYTES).map_err(format_core_error)?;
+    let ocr = inspect_visible_text(bytes);
+    let faces = windows_faces::inspect(bytes);
+    let qr = inspect_qr(bytes);
     Ok(ImageSession {
-        source_path: path.to_string_lossy().into_owned(),
-        source_fingerprint: fingerprint(&bytes),
-        filename: path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("image")
-            .to_owned(),
-        preview_data_url: data_url(extension, &bytes),
+        session_id: summary.id,
+        source_kind: summary.source_kind,
+        filename: summary.filename,
+        preview_data_url: normalized_preview_data_url(bytes)?,
         inspection,
         ocr,
         faces,
         qr,
     })
-}
-
-fn read_image(path: &Path) -> Result<Vec<u8>, String> {
-    read_image_with_limit(path, DEFAULT_MAX_IMAGE_BYTES)
 }
 
 fn read_image_with_limit(path: &Path, max_bytes: usize) -> Result<Vec<u8>, String> {
@@ -460,6 +475,18 @@ fn data_url(extension: &str, bytes: &[u8]) -> String {
     format!("data:{mime};base64,{}", STANDARD.encode(bytes))
 }
 
+fn normalized_preview_data_url(bytes: &[u8]) -> Result<String, String> {
+    const MAX_PREVIEW_DIMENSION: u32 = 2_400;
+    let decoded = image::load_from_memory(bytes)
+        .map_err(|_| "The selected image could not be prepared for local review.".to_owned())?;
+    let preview = decoded.thumbnail(MAX_PREVIEW_DIMENSION, MAX_PREVIEW_DIMENSION);
+    let mut output = Cursor::new(Vec::new());
+    preview
+        .write_to(&mut output, image::ImageFormat::Png)
+        .map_err(|_| "The selected image preview could not be prepared safely.".to_owned())?;
+    Ok(data_url("png", &output.into_inner()))
+}
+
 fn cleaned_image_name(filename: &str) -> String {
     match filename.rsplit_once('.') {
         Some((stem, extension)) if !stem.is_empty() => format!("{stem}.cleaned.{extension}"),
@@ -497,11 +524,14 @@ fn format_core_error(error: ShareGateError) -> String {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(ImageSessionStore::default())
         .invoke_handler(tauri::generate_handler![
             scan_text,
             sanitize_text,
             save_cleaned_text,
             pick_image,
+            paste_image,
+            clear_image_session,
             clean_image_file
         ])
         .run(tauri::generate_context!())

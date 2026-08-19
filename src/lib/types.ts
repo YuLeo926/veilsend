@@ -143,13 +143,32 @@ export interface ImageQrInspection {
   message: string;
 }
 
+export type FaceAvailability = "available" | "unavailable" | "needsReview";
+
+export interface FaceFinding {
+  id: string;
+  label: string;
+  explanation: string;
+  severity: Severity;
+  rectangle: ImageRect;
+}
+
+export interface ImageFaceInspection {
+  availability: FaceAvailability;
+  findings: FaceFinding[];
+  message: string;
+}
+
+export type ImageSourceKind = "file" | "clipboard";
+
 export interface ImageSession {
-  sourcePath: string;
-  sourceFingerprint: string;
+  sessionId: string;
+  sourceKind: ImageSourceKind;
   filename: string;
   previewDataUrl: string;
   inspection: ImageInspection;
   ocr: ImageOcrInspection;
+  faces: ImageFaceInspection;
   qr: ImageQrInspection;
 }
 

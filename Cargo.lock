@@ -3444,12 +3444,14 @@ name = "sharegate"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "image",
  "rfd",
  "serde",
  "serde_json",
  "sharegate-core",
  "tauri",
  "tauri-build",
+ "uuid",
  "windows 0.62.2",
 ]
 

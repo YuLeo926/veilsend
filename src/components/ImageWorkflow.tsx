@@ -135,8 +135,7 @@ export function ImageWorkflow({
     onError("");
     try {
       const nextResult = await cleanImageFile(
-        session.sourcePath,
-        session.sourceFingerprint,
+        session.sessionId,
         Object.values(decisions),
       );
       if (!nextResult) return;

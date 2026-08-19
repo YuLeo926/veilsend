@@ -48,17 +48,27 @@ export async function pickImage(): Promise<ImageSession | null> {
   return invoke<ImageSession | null>("pick_image");
 }
 
+export async function pasteImage(): Promise<ImageSession> {
+  if (!isDesktop()) {
+    throw new Error("Screenshot paste is available in the ShareGate desktop app.");
+  }
+  return invoke<ImageSession>("paste_image");
+}
+
+export async function clearImageSession(): Promise<void> {
+  if (!isDesktop()) return;
+  return invoke<void>("clear_image_session");
+}
+
 export async function cleanImageFile(
-  sourcePath: string,
-  sourceFingerprint: string,
+  sessionId: string,
   decisions: ImageRedactionDecision[],
 ): Promise<CleanedImageFile | null> {
   if (!isDesktop()) {
     throw new Error("Image metadata cleaning is available in the ShareGate desktop app.");
   }
   return invoke<CleanedImageFile | null>("clean_image_file", {
-    sourcePath,
-    sourceFingerprint,
+    sessionId,
     decisions,
   });
 }
