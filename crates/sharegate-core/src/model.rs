@@ -315,6 +315,60 @@ pub struct ImageQrInspection {
     pub message: String,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "camelCase")]
+pub enum BarcodeKind {
+    Code39,
+    Code93,
+    Code128,
+    Codabar,
+    Ean8,
+    Ean13,
+    Itf,
+    UpcA,
+    UpcE,
+    Rss14,
+    RssExpanded,
+    Telepen,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BarcodeFinding {
+    pub id: String,
+    pub kind: BarcodeKind,
+    pub label: String,
+    pub explanation: String,
+    pub severity: Severity,
+    pub masked_value: String,
+    pub encoded_length: usize,
+    pub rectangle: ImageRect,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BarcodeScanReport {
+    pub findings: Vec<BarcodeFinding>,
+    pub symbols_detected: usize,
+    pub decoded_symbols: usize,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum BarcodeAvailability {
+    Available,
+    NeedsReview,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageBarcodeInspection {
+    pub availability: BarcodeAvailability,
+    pub report: Option<BarcodeScanReport>,
+    pub message: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ImageRedactionResult {
