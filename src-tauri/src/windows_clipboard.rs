@@ -24,7 +24,7 @@ pub fn begin_read() -> Result<ClipboardBitmapOperation, ClipboardAdapterError> {
 
     let unavailable = || {
         ClipboardAdapterError::Unavailable(
-            "ShareGate could not read the clipboard. Keep the app focused and try pasting again."
+            "VeilSend could not read the clipboard. Keep the app focused and try pasting again."
                 .to_owned(),
         )
     };
@@ -74,7 +74,7 @@ pub fn complete_read(
     let height = decoder.PixelHeight().map_err(|_| invalid())?;
     if u64::from(width).saturating_mul(u64::from(height)) > 40_000_000 {
         return Err(ClipboardAdapterError::InvalidContent(
-            "The pasted screenshot expands beyond ShareGate's 40-million-pixel safety limit."
+            "The pasted screenshot expands beyond VeilSend's 40-million-pixel safety limit."
                 .to_owned(),
         ));
     }
@@ -145,7 +145,7 @@ fn validate_stream_size(size: u64) -> Result<(), ClipboardAdapterError> {
     }
     if size > MAX_CLIPBOARD_IMAGE_BYTES as u64 {
         return Err(ClipboardAdapterError::InvalidContent(format!(
-            "The pasted screenshot is larger than ShareGate's {} MB local safety limit.",
+            "The pasted screenshot is larger than VeilSend's {} MB local safety limit.",
             MAX_CLIPBOARD_IMAGE_BYTES / 1024 / 1024
         )));
     }

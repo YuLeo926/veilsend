@@ -5,10 +5,10 @@ use std::{
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde::Serialize;
-use sharegate_core::{
+use veilsend_core::{
     DEFAULT_MAX_IMAGE_BYTES, ImageBarcodeInspection, ImageFaceInspection, ImageFormat,
     ImageInspection, ImageOcrInspection, ImageQrInspection, ImageRedactionDecision,
-    ImageRedactionTarget, SanitizeRequest, SanitizeResult, ScanOptions, ScanReport, ShareGateError,
+    ImageRedactionTarget, SanitizeRequest, SanitizeResult, ScanOptions, ScanReport, VeilSendError,
     VerificationStatus, fingerprint, inspect_image, redact_image, sanitize, sanitize_image, scan,
 };
 
@@ -81,13 +81,28 @@ struct CleanedImageFile {
 
 const MAX_SAVED_IMAGE_BYTES: usize = 100 * 1024 * 1024;
 
+fn run_on_dedicated_pdf_thread<T, F>(operation: &str, task: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    // Windows PDF APIs are COM-apartment-sensitive. A fresh thread keeps them
+    // isolated from native dialogs and other COM users on pooled threads.
+    std::thread::Builder::new()
+        .name("veilsend-pdf-worker".to_owned())
+        .spawn(task)
+        .map_err(|error| format!("{operation} could not be started: {error}"))?
+        .join()
+        .map_err(|_| format!("{operation} stopped unexpectedly."))?
+}
+
 #[tauri::command]
-fn scan_text(text: String, options: ScanOptions) -> Result<ScanReport, ShareGateError> {
+fn scan_text(text: String, options: ScanOptions) -> Result<ScanReport, VeilSendError> {
     scan(&text, options)
 }
 
 #[tauri::command]
-fn sanitize_text(request: SanitizeRequest) -> Result<SanitizeResult, ShareGateError> {
+fn sanitize_text(request: SanitizeRequest) -> Result<SanitizeResult, VeilSendError> {
     sanitize(request)
 }
 
@@ -167,8 +182,12 @@ async fn pick_pdf(
         let path = rfd::FileDialog::new()
             .add_filter("PDF documents", &["pdf"])
             .pick_file();
-        path.map(|path| pdf_sessions::prepare_pdf_file(&path))
-            .transpose()
+        path.map(|path| {
+            run_on_dedicated_pdf_thread("The PDF inspection", move || {
+                pdf_sessions::prepare_pdf_file(&path)
+            })
+        })
+        .transpose()
     })
     .await
     .map_err(|error| format!("The PDF picker could not be opened: {error}"))??;
@@ -183,7 +202,9 @@ async fn get_pdf_page_preview(
 ) -> Result<PdfPagePreview, String> {
     let resolved = state.resolve(&session_id)?;
     tauri::async_runtime::spawn_blocking(move || {
-        pdf_sessions::prepare_page_preview(&resolved.source_bytes, page_index)
+        run_on_dedicated_pdf_thread("The PDF page preview", move || {
+            pdf_sessions::prepare_page_preview(&resolved.source_bytes, page_index)
+        })
     })
     .await
     .map_err(|error| format!("The PDF page preview could not be started: {error}"))?
@@ -198,12 +219,14 @@ fn clear_pdf_session(state: tauri::State<'_, PdfSessionStore>) -> Result<(), Str
 async fn clean_pdf_file(
     session_id: String,
     decisions: Vec<ImageRedactionDecision>,
-    manual_regions: Vec<sharegate_core::PdfManualRegion>,
+    manual_regions: Vec<veilsend_core::PdfManualRegion>,
     state: tauri::State<'_, PdfSessionStore>,
 ) -> Result<Option<CleanedPdfFile>, String> {
     let resolved = state.resolve(&session_id)?;
     tauri::async_runtime::spawn_blocking(move || {
-        pdf_pipeline::clean_pdf_file(resolved, decisions, manual_regions)
+        run_on_dedicated_pdf_thread("The PDF safety-copy builder", move || {
+            pdf_pipeline::clean_pdf_file(resolved, decisions, manual_regions)
+        })
     })
     .await
     .map_err(|error| format!("The PDF safety-copy builder could not be started: {error}"))?
@@ -314,7 +337,7 @@ async fn clean_image_file(
         };
         if cleaned_bytes.len() > MAX_SAVED_IMAGE_BYTES {
             return Err(format!(
-                "The clean PNG expands beyond ShareGate's {} MB saved-image limit.",
+                "The clean PNG expands beyond VeilSend's {} MB saved-image limit.",
                 MAX_SAVED_IMAGE_BYTES / 1024 / 1024
             ));
         }
@@ -330,7 +353,7 @@ async fn clean_image_file(
             (cleaned_image_name(original_name), extension)
         };
         let output = rfd::FileDialog::new()
-            .add_filter("ShareGate clean image", &[extension])
+            .add_filter("VeilSend clean image", &[extension])
             .set_file_name(&default_name)
             .save_file();
         let Some(output) = output else {
@@ -341,7 +364,7 @@ async fn clean_image_file(
             .as_deref()
             .is_some_and(|source| same_path(source, &output))
         {
-            return Err("ShareGate never overwrites the original image. Choose a different filename for the clean copy.".to_owned());
+            return Err("VeilSend never overwrites the original image. Choose a different filename for the clean copy.".to_owned());
         }
 
         std::fs::write(&output, &cleaned_bytes)
@@ -489,7 +512,7 @@ fn read_image_with_limit(path: &Path, max_bytes: usize) -> Result<Vec<u8>, Strin
         .map_err(|error| format!("Could not read the selected image: {error}"))?;
     if bytes.len() > max_bytes {
         return Err(format!(
-            "This image is larger than ShareGate's {} MB local safety limit.",
+            "This image is larger than VeilSend's {} MB local safety limit.",
             max_bytes / 1024 / 1024
         ));
     }
@@ -542,12 +565,21 @@ fn same_path(source: &Path, output: &Path) -> bool {
             .and_then(|parent| output.file_name().map(|name| parent.join(name)))
             .unwrap_or_else(|| output.to_path_buf())
     });
-    source
+    if source
         .to_string_lossy()
         .eq_ignore_ascii_case(&output.to_string_lossy())
+    {
+        return true;
+    }
+
+    match (source.try_exists(), output.try_exists()) {
+        (Ok(true), Ok(true)) => same_file::is_same_file(&source, &output).unwrap_or(true),
+        (Ok(_), Ok(_)) => false,
+        _ => true,
+    }
 }
 
-fn format_core_error(error: ShareGateError) -> String {
+fn format_core_error(error: VeilSendError) -> String {
     error.to_string()
 }
 
@@ -570,5 +602,42 @@ pub fn run() {
             clean_pdf_file
         ])
         .run(tauri::generate_context!())
-        .expect("error while running ShareGate");
+        .expect("error while running VeilSend");
+}
+
+#[cfg(test)]
+mod path_tests {
+    use super::{run_on_dedicated_pdf_thread, same_path};
+
+    #[test]
+    fn pdf_work_uses_a_fresh_operating_system_thread() {
+        let caller = std::thread::current().id();
+        let worker = run_on_dedicated_pdf_thread("The test PDF operation", || {
+            Ok(std::thread::current().id())
+        })
+        .unwrap();
+
+        assert_ne!(caller, worker);
+    }
+
+    #[test]
+    fn detects_hard_link_aliases_as_the_same_file() {
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path().join("source.pdf");
+        let alias = directory.path().join("alias.pdf");
+        std::fs::write(&source, b"source").unwrap();
+        std::fs::hard_link(&source, &alias).unwrap();
+
+        assert!(same_path(&source, &alias));
+    }
+
+    #[test]
+    fn allows_a_new_sibling_destination() {
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path().join("source.pdf");
+        let output = directory.path().join("output.pdf");
+        std::fs::write(&source, b"source").unwrap();
+
+        assert!(!same_path(&source, &output));
+    }
 }

@@ -6,7 +6,7 @@ use img_parts::png::Png;
 
 use crate::{
     ImageFormat, ImageInspection, ImageMetadataCategory, ImageMetadataFinding, ImageSanitizeResult,
-    ImageVerification, Severity, ShareGateError, fingerprint,
+    ImageVerification, Severity, VeilSendError, fingerprint,
 };
 
 pub const DEFAULT_MAX_IMAGE_BYTES: usize = 25 * 1024 * 1024;
@@ -31,9 +31,9 @@ enum OrientationState {
     Unknown,
 }
 
-pub fn inspect_image(input: &[u8], max_bytes: usize) -> Result<ImageInspection, ShareGateError> {
+pub fn inspect_image(input: &[u8], max_bytes: usize) -> Result<ImageInspection, VeilSendError> {
     if input.len() > max_bytes {
-        return Err(ShareGateError::ContentTooLarge(max_bytes));
+        return Err(VeilSendError::ContentTooLarge(max_bytes));
     }
 
     if input.starts_with(&[0xff, 0xd8]) {
@@ -41,14 +41,14 @@ pub fn inspect_image(input: &[u8], max_bytes: usize) -> Result<ImageInspection, 
     } else if input.starts_with(PNG_SIGNATURE) {
         inspect_png(input)
     } else {
-        Err(ShareGateError::UnsupportedImage)
+        Err(VeilSendError::UnsupportedImage)
     }
 }
 
 pub fn sanitize_image(
     input: &[u8],
     max_bytes: usize,
-) -> Result<ImageSanitizeResult, ShareGateError> {
+) -> Result<ImageSanitizeResult, VeilSendError> {
     let before = inspect_image(input, max_bytes)?;
     if !before.can_clean_losslessly {
         if let Some(orientation) = before
@@ -58,9 +58,9 @@ pub fn sanitize_image(
             .and_then(|value| value.split_whitespace().next())
             .and_then(|value| value.parse::<u32>().ok())
         {
-            return Err(ShareGateError::OrientationNeedsNormalization(orientation));
+            return Err(VeilSendError::OrientationNeedsNormalization(orientation));
         }
-        return Err(ShareGateError::InvalidImage(
+        return Err(VeilSendError::InvalidImage(
             "EXIF metadata could not be parsed well enough to confirm a safe display orientation."
                 .to_owned(),
         ));
@@ -95,16 +95,16 @@ pub fn sanitize_image(
     })
 }
 
-fn inspect_jpeg(input: &[u8]) -> Result<ImageInspection, ShareGateError> {
+fn inspect_jpeg(input: &[u8]) -> Result<ImageInspection, VeilSendError> {
     let jpeg = Jpeg::from_bytes(Bytes::copy_from_slice(input)).map_err(invalid_image)?;
     let (width, height) = jpeg_dimensions(&jpeg)
-        .ok_or_else(|| ShareGateError::InvalidImage("JPEG dimensions are missing.".to_owned()))?;
+        .ok_or_else(|| VeilSendError::InvalidImage("JPEG dimensions are missing.".to_owned()))?;
     let pixel_bytes = jpeg
         .segments()
         .iter()
         .find(|segment| segment.marker() == markers::SOS)
         .map(|segment| segment.clone().encoder().bytes())
-        .ok_or_else(|| ShareGateError::InvalidImage("JPEG pixel data is missing.".to_owned()))?;
+        .ok_or_else(|| VeilSendError::InvalidImage("JPEG pixel data is missing.".to_owned()))?;
 
     let mut findings = Vec::new();
     let mut orientation = OrientationState::Safe;
@@ -200,10 +200,10 @@ fn inspect_jpeg(input: &[u8]) -> Result<ImageInspection, ShareGateError> {
     })
 }
 
-fn inspect_png(input: &[u8]) -> Result<ImageInspection, ShareGateError> {
+fn inspect_png(input: &[u8]) -> Result<ImageInspection, VeilSendError> {
     let png = Png::from_bytes(Bytes::copy_from_slice(input)).map_err(invalid_image)?;
     let (width, height) = png_dimensions(&png)
-        .ok_or_else(|| ShareGateError::InvalidImage("PNG dimensions are missing.".to_owned()))?;
+        .ok_or_else(|| VeilSendError::InvalidImage("PNG dimensions are missing.".to_owned()))?;
     let mut pixel_bytes = Vec::new();
     for chunk in png.chunks() {
         if matches!(chunk.kind(), PNG_IDAT | PNG_FDAT) {
@@ -211,7 +211,7 @@ fn inspect_png(input: &[u8]) -> Result<ImageInspection, ShareGateError> {
         }
     }
     if pixel_bytes.is_empty() {
-        return Err(ShareGateError::InvalidImage(
+        return Err(VeilSendError::InvalidImage(
             "PNG pixel data is missing.".to_owned(),
         ));
     }
@@ -274,7 +274,7 @@ fn inspect_png(input: &[u8]) -> Result<ImageInspection, ShareGateError> {
     })
 }
 
-fn clean_jpeg(input: &[u8]) -> Result<Vec<u8>, ShareGateError> {
+fn clean_jpeg(input: &[u8]) -> Result<Vec<u8>, VeilSendError> {
     let mut jpeg = Jpeg::from_bytes(Bytes::copy_from_slice(input)).map_err(invalid_image)?;
     jpeg.segments_mut().retain(|segment| {
         !matches!(
@@ -285,7 +285,7 @@ fn clean_jpeg(input: &[u8]) -> Result<Vec<u8>, ShareGateError> {
     Ok(jpeg.encoder().bytes().to_vec())
 }
 
-fn clean_png(input: &[u8]) -> Result<Vec<u8>, ShareGateError> {
+fn clean_png(input: &[u8]) -> Result<Vec<u8>, VeilSendError> {
     let mut png = Png::from_bytes(Bytes::copy_from_slice(input)).map_err(invalid_image)?;
     png.chunks_mut().retain(|chunk| {
         !matches!(
@@ -480,8 +480,8 @@ fn png_dimensions(png: &Png) -> Option<(u32, u32)> {
     })
 }
 
-fn invalid_image(error: img_parts::Error) -> ShareGateError {
-    ShareGateError::InvalidImage(error.to_string())
+fn invalid_image(error: img_parts::Error) -> VeilSendError {
+    VeilSendError::InvalidImage(error.to_string())
 }
 
 #[cfg(test)]
@@ -564,7 +564,7 @@ mod tests {
         assert!(!inspection.can_clean_losslessly);
         assert!(matches!(
             sanitize_image(&source, DEFAULT_MAX_IMAGE_BYTES),
-            Err(ShareGateError::OrientationNeedsNormalization(6))
+            Err(VeilSendError::OrientationNeedsNormalization(6))
         ));
     }
 
@@ -572,11 +572,11 @@ mod tests {
     fn rejects_unsupported_and_oversized_images() {
         assert!(matches!(
             inspect_image(b"GIF89a", DEFAULT_MAX_IMAGE_BYTES),
-            Err(ShareGateError::UnsupportedImage)
+            Err(VeilSendError::UnsupportedImage)
         ));
         assert!(matches!(
             inspect_image(&[0xff, 0xd8, 0xff, 0xd9], 2),
-            Err(ShareGateError::ContentTooLarge(2))
+            Err(VeilSendError::ContentTooLarge(2))
         ));
     }
 
@@ -590,7 +590,7 @@ mod tests {
         assert!(!inspection.can_clean_losslessly);
         assert!(matches!(
             sanitize_image(&source, DEFAULT_MAX_IMAGE_BYTES),
-            Err(ShareGateError::InvalidImage(_))
+            Err(VeilSendError::InvalidImage(_))
         ));
     }
 }

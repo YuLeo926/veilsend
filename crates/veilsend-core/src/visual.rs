@@ -4,7 +4,7 @@ use image::{DynamicImage, ImageFormat as EncodedFormat, Rgba};
 
 use crate::{
     ImageRect, ImageRedactionDecision, ImageRedactionResult, ImageRedactionTarget,
-    ImageTextFinding, OcrConfidence, OcrScanReport, OcrWord, ScanOptions, ShareGateError,
+    ImageTextFinding, OcrConfidence, OcrScanReport, OcrWord, ScanOptions, VeilSendError,
     fingerprint, inspect_image, scan,
 };
 
@@ -22,7 +22,7 @@ pub fn map_ocr_findings(
     words: &[OcrWord],
     language: Option<String>,
     options: ScanOptions,
-) -> Result<OcrScanReport, ShareGateError> {
+) -> Result<OcrScanReport, VeilSendError> {
     let mut text = String::new();
     let mut positioned = Vec::new();
     let mut previous_line = None;
@@ -103,27 +103,27 @@ pub fn redact_image(
     expected_file_fingerprint: &str,
     targets: &[ImageRedactionTarget],
     decisions: &[ImageRedactionDecision],
-) -> Result<ImageRedactionResult, ShareGateError> {
+) -> Result<ImageRedactionResult, VeilSendError> {
     if fingerprint(input) != expected_file_fingerprint {
-        return Err(ShareGateError::StaleContent);
+        return Err(VeilSendError::StaleContent);
     }
 
     let inspection = inspect_image(input, max_bytes)?;
     if !inspection.can_clean_losslessly {
-        return Err(ShareGateError::InvalidImage(
+        return Err(VeilSendError::InvalidImage(
             "Normalize the image orientation before visual redaction so OCR regions stay aligned."
                 .to_owned(),
         ));
     }
     let width = inspection.width.ok_or_else(|| {
-        ShareGateError::InvalidImage("The image width could not be read.".to_owned())
+        VeilSendError::InvalidImage("The image width could not be read.".to_owned())
     })?;
     let height = inspection.height.ok_or_else(|| {
-        ShareGateError::InvalidImage("The image height could not be read.".to_owned())
+        VeilSendError::InvalidImage("The image height could not be read.".to_owned())
     })?;
     if u64::from(width) * u64::from(height) > MAX_DECODED_PIXELS {
-        return Err(ShareGateError::InvalidImage(format!(
-            "The image expands beyond ShareGate's {MAX_DECODED_PIXELS}-pixel visual-redaction limit."
+        return Err(VeilSendError::InvalidImage(format!(
+            "The image expands beyond VeilSend's {MAX_DECODED_PIXELS}-pixel visual-redaction limit."
         )));
     }
 
@@ -147,13 +147,13 @@ pub fn redact_image(
         height,
     );
     if !selected.is_empty() && rectangles.is_empty() {
-        return Err(ShareGateError::InvalidImage(
+        return Err(VeilSendError::InvalidImage(
             "The selected findings did not contain valid image regions.".to_owned(),
         ));
     }
 
     let decoded = image::load_from_memory(input)
-        .map_err(|error| ShareGateError::InvalidImage(error.to_string()))?;
+        .map_err(|error| VeilSendError::InvalidImage(error.to_string()))?;
     let mut pixels = decoded.to_rgba8();
     for rect in &rectangles {
         let right = rect.x.saturating_add(rect.width).min(width);
@@ -168,7 +168,7 @@ pub fn redact_image(
     let mut output = Cursor::new(Vec::new());
     DynamicImage::ImageRgba8(pixels)
         .write_to(&mut output, EncodedFormat::Png)
-        .map_err(|error| ShareGateError::InvalidImage(error.to_string()))?;
+        .map_err(|error| VeilSendError::InvalidImage(error.to_string()))?;
     let cleaned_bytes = output.into_inner();
     let cleaned_size = cleaned_bytes.len();
 
@@ -432,7 +432,7 @@ mod tests {
 
         assert!(matches!(
             redact_image(&source, DEFAULT_MAX_IMAGE_BYTES, "stale", &[target], &[]),
-            Err(ShareGateError::StaleContent)
+            Err(VeilSendError::StaleContent)
         ));
     }
 }

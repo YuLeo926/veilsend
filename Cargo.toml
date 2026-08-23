@@ -1,4 +1,4 @@
 [workspace]
-members = ["crates/sharegate-core", "src-tauri"]
+members = ["crates/veilsend-core", "src-tauri"]
 resolver = "2"
 

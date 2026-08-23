@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use rxing::{BarcodeFormat, DecodeHints, Exceptions, RXingResult};
 
 use crate::{
-    BarcodeFinding, BarcodeKind, BarcodeScanReport, ImageRect, Severity, ShareGateError,
+    BarcodeFinding, BarcodeKind, BarcodeScanReport, ImageRect, Severity, VeilSendError,
     fingerprint, inspect_image,
 };
 
@@ -16,22 +16,22 @@ const OUTER_PADDING: f32 = 8.0;
 pub fn inspect_barcodes(
     input: &[u8],
     max_bytes: usize,
-) -> Result<BarcodeScanReport, ShareGateError> {
+) -> Result<BarcodeScanReport, VeilSendError> {
     let inspection = inspect_image(input, max_bytes)?;
     let width = inspection.width.ok_or_else(|| {
-        ShareGateError::InvalidImage("The image width could not be read.".to_owned())
+        VeilSendError::InvalidImage("The image width could not be read.".to_owned())
     })?;
     let height = inspection.height.ok_or_else(|| {
-        ShareGateError::InvalidImage("The image height could not be read.".to_owned())
+        VeilSendError::InvalidImage("The image height could not be read.".to_owned())
     })?;
     if u64::from(width) * u64::from(height) > MAX_DECODED_PIXELS {
-        return Err(ShareGateError::InvalidImage(format!(
-            "The image expands beyond ShareGate's {MAX_DECODED_PIXELS}-pixel barcode limit."
+        return Err(VeilSendError::InvalidImage(format!(
+            "The image expands beyond VeilSend's {MAX_DECODED_PIXELS}-pixel barcode limit."
         )));
     }
 
     let grayscale = image::load_from_memory(input)
-        .map_err(|error| ShareGateError::InvalidImage(error.to_string()))?
+        .map_err(|error| VeilSendError::InvalidImage(error.to_string()))?
         .to_luma8();
     let grayscale = grayscale.into_raw();
     let mut hints = DecodeHints {
@@ -170,7 +170,7 @@ fn build_report(
             kind,
             label: label.clone(),
             explanation: format!(
-                "{label} can contain identifiers, account references, or access data. ShareGate keeps its encoded content hidden."
+                "{label} can contain identifiers, account references, or access data. VeilSend keeps its encoded content hidden."
             ),
             severity: Severity::High,
             masked_value: format!(

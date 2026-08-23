@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{
-    error::ShareGateError,
+    error::VeilSendError,
     fingerprint,
     model::{
         FindingDecision, SanitizeRequest, SanitizeResult, VerificationReport, VerificationStatus,
@@ -9,12 +9,12 @@ use crate::{
     scan,
 };
 
-pub fn sanitize(request: SanitizeRequest) -> Result<SanitizeResult, ShareGateError> {
+pub fn sanitize(request: SanitizeRequest) -> Result<SanitizeResult, VeilSendError> {
     if request.original_text.len() > request.options.max_bytes {
-        return Err(ShareGateError::ContentTooLarge(request.options.max_bytes));
+        return Err(VeilSendError::ContentTooLarge(request.options.max_bytes));
     }
     if fingerprint(request.original_text.as_bytes()) != request.content_fingerprint {
-        return Err(ShareGateError::StaleContent);
+        return Err(VeilSendError::StaleContent);
     }
 
     let decisions: HashMap<&str, &FindingDecision> = request
@@ -39,20 +39,20 @@ pub fn sanitize(request: SanitizeRequest) -> Result<SanitizeResult, ShareGateErr
             .chars()
             .any(|character| character.is_control() && character != '\n' && character != '\t')
         {
-            return Err(ShareGateError::InvalidReplacement);
+            return Err(VeilSendError::InvalidReplacement);
         }
         let Some(value) = request.original_text.get(finding.start..finding.end) else {
-            return Err(ShareGateError::StaleFinding(finding.id.clone()));
+            return Err(VeilSendError::StaleFinding(finding.id.clone()));
         };
         if fingerprint(value.as_bytes()) != finding.match_fingerprint {
-            return Err(ShareGateError::StaleFinding(finding.id.clone()));
+            return Err(VeilSendError::StaleFinding(finding.id.clone()));
         }
         edits.push((finding.start, finding.end, decision.replacement.as_str()));
     }
 
     edits.sort_by_key(|(start, _, _)| *start);
     if edits.windows(2).any(|pair| pair[0].1 > pair[1].0) {
-        return Err(ShareGateError::OverlappingFindings);
+        return Err(VeilSendError::OverlappingFindings);
     }
 
     let mut cleaned_text = request.original_text;
@@ -70,7 +70,7 @@ pub fn sanitize(request: SanitizeRequest) -> Result<SanitizeResult, ShareGateErr
     };
     let message = match status {
         VerificationStatus::Verified => {
-            "No enabled ShareGate rule found sensitive content in the cleaned copy.".to_owned()
+            "No enabled VeilSend rule found sensitive content in the cleaned copy.".to_owned()
         }
         VerificationStatus::NeedsReview => format!(
             "{} finding(s) remain after cleaning. Review the output before sharing.",

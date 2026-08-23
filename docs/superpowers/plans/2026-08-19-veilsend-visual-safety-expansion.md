@@ -1,14 +1,14 @@
-# ShareGate Visual Safety Expansion Implementation Plan
+# VeilSend Visual Safety Expansion Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add local face detection, supported one-dimensional barcode detection, and direct screenshot paste to ShareGate's existing image review and saved-file verification workflow.
+**Goal:** Add local face detection, supported one-dimensional barcode detection, and direct screenshot paste to VeilSend's existing image review and saved-file verification workflow.
 
 **Architecture:** Keep barcode decoding in the reusable Rust core and Windows face/clipboard adapters in the Tauri host. Replace path-bearing frontend requests with one desktop-owned image source session, then coordinate OCR, face, QR, barcode, and metadata inspection through a shared visual bundle before export and against the actual saved bytes afterward.
 
 **Tech Stack:** Rust 2024, Tauri 2, Windows Runtime APIs, `rxing` 0.9.2, React 19, TypeScript 5.9, Vitest 4.
 
-**Spec:** `docs/superpowers/specs/2026-08-19-sharegate-visual-safety-expansion-design.md`
+**Spec:** `docs/superpowers/specs/2026-08-19-veilsend-visual-safety-expansion-design.md`
 
 ## Global Constraints
 
@@ -28,23 +28,23 @@
 
 ### New files
 
-- `crates/sharegate-core/src/barcode.rs` — one-dimensional barcode decoding, safe geometry, summaries, and core tests.
+- `crates/veilsend-core/src/barcode.rs` — one-dimensional barcode decoding, safe geometry, summaries, and core tests.
 - `src-tauri/src/windows_faces.rs` — Windows face adapter and safe error classification.
 - `src-tauri/src/windows_clipboard.rs` — focused clipboard bitmap intake and PNG normalization.
 - `src-tauri/src/image_sessions.rs` — one-session source store for file and clipboard inputs.
 - `src-tauri/src/image_pipeline.rs` — combined detector bundles, trusted decision matching, targets, and verification helpers.
 - `src/lib/imageWorkflowModel.ts` — pure UI composition and paste-routing helpers.
 - `src/lib/imageWorkflowModel.test.ts` — Vitest coverage for the UI model without adding a DOM-test dependency.
-- `crates/sharegate-core/examples/make_barcode_fixture.rs` — reproducible synthetic one-dimensional barcode fixture generator.
+- `crates/veilsend-core/examples/make_barcode_fixture.rs` — reproducible synthetic one-dimensional barcode fixture generator.
 - `fixtures/barcode-sensitive-sample.png` — generated barcode-only fixture.
 - `fixtures/visual-sensitive-sample.png` — synthetic acceptance image containing a non-identifying face and generated barcodes.
 
 ### Modified files
 
 - `Cargo.lock` — locked dependency graph.
-- `crates/sharegate-core/Cargo.toml` — minimal `rxing` decoder features and test-only encoder features.
-- `crates/sharegate-core/src/lib.rs` — barcode module/export.
-- `crates/sharegate-core/src/model.rs` — barcode and face serialized models.
+- `crates/veilsend-core/Cargo.toml` — minimal `rxing` decoder features and test-only encoder features.
+- `crates/veilsend-core/src/lib.rs` — barcode module/export.
+- `crates/veilsend-core/src/model.rs` — barcode and face serialized models.
 - `src-tauri/Cargo.toml` — Windows face/clipboard features and UUID support.
 - `src-tauri/src/lib.rs` — commands, managed session store, save dialog, and response assembly.
 - `src/lib/types.ts` — session, face, barcode, and receipt types.
@@ -59,15 +59,15 @@
 ### Task 1: Pure-Rust one-dimensional barcode scanner
 
 **Files:**
-- Modify: `crates/sharegate-core/Cargo.toml`
-- Modify: `crates/sharegate-core/src/model.rs:273`
-- Create: `crates/sharegate-core/src/barcode.rs`
-- Modify: `crates/sharegate-core/src/lib.rs:1-20`
+- Modify: `crates/veilsend-core/Cargo.toml`
+- Modify: `crates/veilsend-core/src/model.rs:273`
+- Create: `crates/veilsend-core/src/barcode.rs`
+- Modify: `crates/veilsend-core/src/lib.rs:1-20`
 - Modify: `Cargo.lock`
 
 **Interfaces:**
 - Consumes: encoded JPEG/PNG bytes and `DEFAULT_MAX_IMAGE_BYTES`.
-- Produces: `pub fn inspect_barcodes(input: &[u8], max_bytes: usize) -> Result<BarcodeScanReport, ShareGateError>`.
+- Produces: `pub fn inspect_barcodes(input: &[u8], max_bytes: usize) -> Result<BarcodeScanReport, VeilSendError>`.
 - Produces: `BarcodeKind`, `BarcodeFinding`, `BarcodeScanReport`, `BarcodeAvailability`, and `ImageBarcodeInspection` serialized with camel-case names.
 
 - [ ] **Step 1: Add the minimal dependency contract**
@@ -108,7 +108,7 @@ assert_eq!(report.findings[0].kind, BarcodeKind::Code128);
 assert!(!serde_json::to_string(&report).unwrap().contains("SGTEST-ACCOUNT-001"));
 ```
 
-Run: `cargo test -p sharegate-core barcode::tests::classifies_code_128_without_serializing_payload`
+Run: `cargo test -p veilsend-core barcode::tests::classifies_code_128_without_serializing_payload`
 
 Expected: FAIL because `barcode` and `inspect_barcodes` do not exist.
 
@@ -120,7 +120,7 @@ Decode the existing in-memory grayscale pixels with `POSSIBLE_FORMATS`, `TRY_HAR
 
 Generate horizontal, 90-degree rotated, inverted, and two-code fixtures. Assert every rectangle is non-empty, bounded by image dimensions, conservatively padded on its minor axis, and deduplicated without using payload as the public key.
 
-Run: `cargo test -p sharegate-core barcode`
+Run: `cargo test -p veilsend-core barcode`
 
 Expected: PASS for every barcode-core test.
 
@@ -128,7 +128,7 @@ Expected: PASS for every barcode-core test.
 
 Convert detected barcode findings into `ImageRedactionTarget`, call `redact_image`, and assert the selected symbol is absent from a second `inspect_barcodes` call.
 
-Run: `cargo test -p sharegate-core barcode::tests::opaque_redaction_makes_selected_barcode_undecodable`
+Run: `cargo test -p veilsend-core barcode::tests::opaque_redaction_makes_selected_barcode_undecodable`
 
 Expected: PASS.
 
@@ -136,7 +136,7 @@ Expected: PASS.
 
 Run: `cargo fmt --all -- --check`
 
-Run: `cargo clippy -p sharegate-core --all-targets -- -D warnings`
+Run: `cargo clippy -p veilsend-core --all-targets -- -D warnings`
 
 Run: `cargo audit`
 
@@ -151,7 +151,7 @@ Commit: `feat: add local one-dimensional barcode detection`
 **Files:**
 - Modify: `src-tauri/Cargo.toml:23-30`
 - Create: `src-tauri/src/windows_faces.rs`
-- Modify: `crates/sharegate-core/src/model.rs:312-321`
+- Modify: `crates/veilsend-core/src/model.rs:312-321`
 - Modify: `src-tauri/src/lib.rs:16`
 
 **Interfaces:**
@@ -171,7 +171,7 @@ Enable `Media_FaceAnalysis` while preserving the existing OCR and imaging featur
 
 Extract pure conversion helpers and verify negative/fractional Windows rectangles clamp outward to safe integer pixels. Verify unsupported APIs map to `Unavailable` and invalid geometry maps to `NeedsReview`.
 
-Run: `cargo test -p sharegate windows_faces::tests`
+Run: `cargo test -p veilsend windows_faces::tests`
 
 Expected: FAIL because `windows_faces` does not exist.
 
@@ -193,7 +193,7 @@ This keeps workspace builds portable while preventing a clean claim on unsupport
 
 - [ ] **Step 5: Run adapter and workspace checks**
 
-Run: `cargo test -p sharegate windows_faces::tests`
+Run: `cargo test -p veilsend windows_faces::tests`
 
 Run: `cargo check --workspace`
 
@@ -232,7 +232,7 @@ assert!(store.resolve(&first.id).is_err());
 assert_eq!(store.resolve(&second.id).unwrap().fingerprint, second.fingerprint);
 ```
 
-Run: `cargo test -p sharegate image_sessions::tests`
+Run: `cargo test -p veilsend image_sessions::tests`
 
 Expected: FAIL because the store does not exist.
 
@@ -244,7 +244,7 @@ Use `uuid = { version = "1", features = ["v4"] }`. Canonicalize file paths at in
 
 Test pure stream-size validation and PNG signature validation without mutating the system clipboard. Add an ignored Windows acceptance test that reads an already-present clipboard bitmap but never writes or clears clipboard history.
 
-Run: `cargo test -p sharegate windows_clipboard::tests`
+Run: `cargo test -p veilsend windows_clipboard::tests`
 
 Expected: FAIL because the clipboard adapter does not exist.
 
@@ -304,7 +304,7 @@ Commit: `feat: add in-memory screenshot intake sessions`
 
 Cover exact match, stable overlap after a small face-box shift, cross-detector rejection, missing decision rejection, ambiguous overlap rejection, and default-redact behavior only for a reviewed finding whose explicit decision is present.
 
-Run: `cargo test -p sharegate image_pipeline::tests::decision_matching`
+Run: `cargo test -p veilsend image_pipeline::tests::decision_matching`
 
 Expected: FAIL because `image_pipeline` does not exist.
 
@@ -320,7 +320,7 @@ Resolve source bytes from the session, rerun the full bundle, pair current findi
 
 Verify a deliberately kept face is accepted only as `CleanedWithExceptions`, an unreviewed remaining face is `NeedsReview`, and a barcode cannot satisfy a kept QR exception even when rectangles overlap.
 
-Run: `cargo test -p sharegate image_pipeline::tests::saved_output_exceptions`
+Run: `cargo test -p veilsend image_pipeline::tests::saved_output_exceptions`
 
 Expected: FAIL until type-safe exception matching exists.
 
@@ -410,7 +410,7 @@ Commit: `feat: add face barcode and screenshot review UI`
 ### Task 6: Fixtures, documentation, packaged acceptance, and release build
 
 **Files:**
-- Create: `crates/sharegate-core/examples/make_barcode_fixture.rs`
+- Create: `crates/veilsend-core/examples/make_barcode_fixture.rs`
 - Create: `fixtures/barcode-sensitive-sample.png`
 - Create: `fixtures/visual-sensitive-sample.png`
 - Modify: `README.md`
@@ -419,13 +419,13 @@ Commit: `feat: add face barcode and screenshot review UI`
 
 **Interfaces:**
 - Consumes: completed detector and UI pipeline.
-- Produces: reproducible barcode fixtures, a synthetic face/barcode acceptance image, current documentation, and `target/release/sharegate.exe`.
+- Produces: reproducible barcode fixtures, a synthetic face/barcode acceptance image, current documentation, and `target/release/veilsend.exe`.
 
 - [ ] **Step 1: Add deterministic barcode fixture generation**
 
 Generate reserved fake payloads only, including `SGTEST-000001`, an EAN check-digit-valid test number, and a UPC check-digit-valid test number. Record the exact regeneration command in `docs/development.md`.
 
-Run: `cargo run -p sharegate-core --example make_barcode_fixture`
+Run: `cargo run -p veilsend-core --example make_barcode_fixture`
 
 Expected: `fixtures/barcode-sensitive-sample.png` is regenerated byte-for-byte.
 
@@ -441,9 +441,9 @@ Run: `cargo clippy --workspace --all-targets -- -D warnings`
 
 Run: `cargo test --workspace`
 
-Run: `cargo test -p sharegate windows_ocr::tests::recognizes_the_synthetic_acceptance_fixture -- --ignored`
+Run: `cargo test -p veilsend windows_ocr::tests::recognizes_the_synthetic_acceptance_fixture -- --ignored`
 
-Run: `cargo test -p sharegate windows_faces::tests::recognizes_the_synthetic_acceptance_fixture -- --ignored`
+Run: `cargo test -p veilsend windows_faces::tests::recognizes_the_synthetic_acceptance_fixture -- --ignored`
 
 Run: `npm test`
 
@@ -459,7 +459,7 @@ Expected: all tests and builds pass; audits report no newly introduced vulnerabi
 
 Run: `npm run tauri build -- --no-bundle`
 
-Expected: `target/release/sharegate.exe` embeds the frontend and does not point at a development server.
+Expected: `target/release/veilsend.exe` embeds the frontend and does not point at a development server.
 
 - [ ] **Step 5: Exercise the real clipboard flow**
 

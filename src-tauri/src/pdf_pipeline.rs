@@ -1,15 +1,16 @@
 use std::{
     collections::{HashMap, HashSet},
-    io::Read,
+    io::{Read, Seek, SeekFrom, Write},
     path::Path,
 };
 
 use serde::Serialize;
-use sharegate_core::{
+use sha2::{Digest, Sha256};
+use veilsend_core::{
     DEFAULT_MAX_IMAGE_BYTES, DEFAULT_MAX_PDF_OUTPUT_BYTES, DEFAULT_PDF_RENDER_DPI, ImageRect,
-    ImageRedactionDecision, ImageRedactionTarget, PdfBuildLimits, PdfManualRegion, PdfPageImage,
-    PdfPageRaster, VerificationStatus, build_flattened_pdf_from_images, compress_pdf_page,
-    fingerprint, normalized_rect_to_pixels, redact_image,
+    ImageRedactionDecision, ImageRedactionTarget, PdfBuildLimits, PdfImageDocumentBuilder,
+    PdfManualRegion, PdfPageRaster, VerificationStatus, compress_pdf_page, fingerprint,
+    normalized_rect_to_pixels, redact_image,
 };
 
 use crate::{
@@ -138,10 +139,10 @@ pub fn clean_pdf_file(
     decisions: Vec<ImageRedactionDecision>,
     manual_regions: Vec<PdfManualRegion>,
 ) -> Result<Option<CleanedPdfFile>, String> {
-    let prepared = build_safety_copy(&resolved, &decisions, &manual_regions)?;
+    let mut prepared = build_safety_copy(&resolved, &decisions, &manual_regions)?;
     let default_name = redacted_pdf_name(&resolved.filename);
     let output = rfd::FileDialog::new()
-        .add_filter("ShareGate flattened PDF", &["pdf"])
+        .add_filter("VeilSend flattened PDF", &["pdf"])
         .set_file_name(&default_name)
         .save_file();
     let Some(output) = output else {
@@ -156,18 +157,76 @@ pub fn clean_pdf_file(
     }
     if same_path(&resolved.canonical_path, &output) {
         return Err(
-            "ShareGate never overwrites the original PDF. Choose a different filename for the safety copy."
+            "VeilSend never overwrites the original PDF. Choose a different filename for the safety copy."
                 .to_owned(),
         );
     }
 
-    std::fs::write(&output, &prepared.bytes)
-        .map_err(|error| format!("Could not save the flattened PDF safety copy: {error}"))?;
-    let saved_bytes = read_pdf_with_limit(&output)?;
-    if fingerprint(&saved_bytes) != fingerprint(&prepared.bytes) || saved_bytes != prepared.bytes {
-        return Err("The saved PDF bytes do not match the locally rebuilt safety copy.".to_owned());
+    if output
+        .try_exists()
+        .map_err(|error| format!("Could not inspect the chosen PDF destination: {error}"))?
+    {
+        return Err(
+            "VeilSend only creates a new safety copy. Choose a filename that does not already exist."
+                .to_owned(),
+        );
     }
-    let verification = verify_saved_copy(&saved_bytes, &prepared)?;
+
+    let output_parent = output.parent().ok_or_else(|| {
+        "The chosen PDF destination does not have a writable parent folder.".to_owned()
+    })?;
+    let mut temporary = tempfile::Builder::new()
+        .prefix(".veilsend-")
+        .suffix(".pdf")
+        .tempfile_in(output_parent)
+        .map_err(|error| format!("Could not create a temporary PDF safety copy: {error}"))?;
+    temporary
+        .as_file_mut()
+        .write_all(&prepared.bytes)
+        .and_then(|_| temporary.as_file_mut().flush())
+        .and_then(|_| temporary.as_file().sync_all())
+        .map_err(|error| format!("Could not finish the temporary PDF safety copy: {error}"))?;
+    temporary
+        .as_file_mut()
+        .seek(SeekFrom::Start(0))
+        .map_err(|error| format!("Could not reopen the temporary PDF safety copy: {error}"))?;
+    if !reader_matches_bytes(temporary.as_file_mut(), &prepared.bytes)? {
+        return Err("The temporary PDF bytes do not match the local reconstruction.".to_owned());
+    }
+    let expected_size = prepared.bytes.len();
+    let expected_fingerprint = fingerprint(&prepared.bytes);
+    prepared.bytes.clear();
+    prepared.bytes.shrink_to_fit();
+
+    // Close the writer handle before asking the Windows PDF runtime to reopen
+    // the staged file. Some Windows storage providers refuse a second open
+    // while the named temporary file's original handle is still alive.
+    let temporary = temporary.into_temp_path();
+    let verification = verify_saved_copy_file(&temporary, &prepared)?;
+    let (temporary_fingerprint, temporary_size) = fingerprint_pdf_file(&temporary)?;
+    if temporary_size != expected_size || temporary_fingerprint != expected_fingerprint {
+        return Err("The verified temporary PDF changed before it could be saved.".to_owned());
+    }
+
+    temporary.persist_noclobber(&output).map_err(|error| {
+        format!(
+            "Could not publish the verified PDF safety copy without replacing another file: {}",
+            error.error
+        )
+    })?;
+    let persisted = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&output)
+        .map_err(|error| format!("Could not reopen the saved PDF safety copy: {error}"))?;
+    persisted
+        .sync_all()
+        .map_err(|error| format!("Could not finish the saved PDF safety copy: {error}"))?;
+    drop(persisted);
+    let (saved_fingerprint, saved_size) = fingerprint_pdf_file(&output)?;
+    if saved_size != expected_size || saved_fingerprint != expected_fingerprint {
+        return Err("The saved PDF does not match the verified safety copy.".to_owned());
+    }
     let filename = output
         .file_name()
         .and_then(|name| name.to_str())
@@ -178,7 +237,7 @@ pub fn clean_pdf_file(
         saved_path: output.to_string_lossy().into_owned(),
         filename,
         original_bytes: resolved.source_bytes.len(),
-        cleaned_size: saved_bytes.len(),
+        cleaned_size: saved_size,
         pages_rebuilt: prepared.expected_pages.len(),
         redacted_findings: prepared.redacted_findings,
         redacted_text_findings: prepared.redacted_by_kind.text,
@@ -204,7 +263,9 @@ fn build_safety_copy(
     }
     let decisions_by_id = validate_decisions(resolved, decisions)?;
     let manual_by_page = validate_manual_regions(resolved, manual_regions)?;
-    let mut compressed_pages: Vec<PdfPageImage> = Vec::with_capacity(resolved.pages.len());
+    let mut pdf_builder =
+        PdfImageDocumentBuilder::new(resolved.pages.len(), PdfBuildLimits::default())
+            .map_err(format_core_error)?;
     let mut expected_pages = Vec::with_capacity(resolved.pages.len());
     let mut kept_by_page = Vec::with_capacity(resolved.pages.len());
     let mut selected_rectangles_by_page = Vec::with_capacity(resolved.pages.len());
@@ -303,10 +364,12 @@ fn build_safety_copy(
                 height_points: rendered.descriptor.height_points,
                 rgb_bytes: rgb,
             };
-            compressed_pages.push(
-                compress_pdf_page(&raster)
-                    .map_err(|error| PdfAdapterError::Invalid(error.to_string()))?,
-            );
+            let compressed = compress_pdf_page(&raster)
+                .map_err(|error| PdfAdapterError::Invalid(error.to_string()))?;
+            drop(raster);
+            pdf_builder
+                .push_page(&compressed)
+                .map_err(|error| PdfAdapterError::Invalid(error.to_string()))?;
             expected_pages.push(rendered.descriptor);
             kept_by_page.push(
                 resolved_visual
@@ -334,14 +397,10 @@ fn build_safety_copy(
     )
     .map_err(PdfAdapterError::into_message)?;
 
-    if descriptors.len() != resolved.pages.len()
-        || compressed_pages.len() != resolved.pages.len()
-        || expected_pages.len() != resolved.pages.len()
-    {
-        return Err("ShareGate could not safely rebuild every reviewed PDF page.".to_owned());
+    if descriptors.len() != resolved.pages.len() || expected_pages.len() != resolved.pages.len() {
+        return Err("VeilSend could not safely rebuild every reviewed PDF page.".to_owned());
     }
-    let bytes = build_flattened_pdf_from_images(&compressed_pages, PdfBuildLimits::default())
-        .map_err(format_core_error)?;
+    let bytes = pdf_builder.finish().map_err(format_core_error)?;
     verify_flattened_structure(&bytes, expected_pages.len())?;
 
     Ok(PreparedPdfSafetyCopy {
@@ -358,16 +417,37 @@ fn build_safety_copy(
     })
 }
 
+#[cfg(test)]
 fn verify_saved_copy(
     saved_bytes: &[u8],
     prepared: &PreparedPdfSafetyCopy,
 ) -> Result<CleanedPdfVerification, String> {
     verify_flattened_structure(saved_bytes, prepared.expected_pages.len())?;
+    verify_rendered_copy(prepared, |visitor| {
+        windows_pdf::visit_pages(saved_bytes, DEFAULT_PDF_RENDER_DPI, visitor)
+    })
+}
+
+fn verify_saved_copy_file(
+    path: &Path,
+    prepared: &PreparedPdfSafetyCopy,
+) -> Result<CleanedPdfVerification, String> {
+    verify_rendered_copy(prepared, |visitor| {
+        windows_pdf::visit_file_pages(path, DEFAULT_PDF_RENDER_DPI, visitor)
+    })
+}
+
+fn verify_rendered_copy(
+    prepared: &PreparedPdfSafetyCopy,
+    visit: impl FnOnce(
+        &mut dyn FnMut(windows_pdf::RenderedPdfPage) -> Result<(), PdfAdapterError>,
+    ) -> Result<Vec<PdfPageDescriptor>, PdfAdapterError>,
+) -> Result<CleanedPdfVerification, String> {
     let mut checks = AggregateChecks::default();
     let mut remaining = FindingCounts::default();
     let mut all_remaining_are_exceptions = true;
     let mut pages_rendered = 0;
-    let descriptors = windows_pdf::visit_pages(saved_bytes, DEFAULT_PDF_RENDER_DPI, |rendered| {
+    let mut visitor = |rendered: windows_pdf::RenderedPdfPage| {
         let page_index = rendered.descriptor.page_index;
         let expected = prepared.expected_pages.get(page_index).ok_or_else(|| {
             PdfAdapterError::Invalid("The saved PDF contains an unexpected extra page.".to_owned())
@@ -392,8 +472,8 @@ fn verify_saved_copy(
             remaining_are_exceptions(&visual.reviewed, &prepared.kept_by_page[page_index]);
         pages_rendered += 1;
         Ok(())
-    })
-    .map_err(PdfAdapterError::into_message)?;
+    };
+    let descriptors = visit(&mut visitor).map_err(PdfAdapterError::into_message)?;
     let page_count_match = descriptors.len() == prepared.expected_pages.len()
         && pages_rendered == prepared.expected_pages.len();
     if !page_count_match {
@@ -420,7 +500,7 @@ fn verify_saved_copy(
             prepared.exceptions
         ),
         VerificationStatus::NeedsReview if !prepared.source_checks.all_complete() => {
-            "The flattened copy was saved, but one or more source-page detectors did not complete, so ShareGate cannot mark it Verified."
+            "The flattened copy was saved, but one or more source-page detectors did not complete, so VeilSend cannot mark it Verified."
                 .to_owned()
         }
         VerificationStatus::NeedsReview if !checks.all_complete() => {
@@ -572,27 +652,54 @@ fn verify_flattened_structure(bytes: &[u8], pages: usize) -> Result<(), String> 
         .any(|token| bytes.windows(token.len()).any(|window| window == *token))
     {
         return Err(
-            "The rebuilt PDF did not satisfy ShareGate's flattened image-only structure."
-                .to_owned(),
+            "The rebuilt PDF did not satisfy VeilSend's flattened image-only structure.".to_owned(),
         );
     }
     Ok(())
 }
 
-fn read_pdf_with_limit(path: &Path) -> Result<Vec<u8>, String> {
+fn reader_matches_bytes(reader: &mut std::fs::File, expected: &[u8]) -> Result<bool, String> {
+    let mut offset = 0;
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = reader
+            .read(&mut buffer)
+            .map_err(|error| format!("Could not reread the temporary PDF: {error}"))?;
+        if read == 0 {
+            return Ok(offset == expected.len());
+        }
+        let end = offset.saturating_add(read);
+        if end > expected.len() || buffer[..read] != expected[offset..end] {
+            return Ok(false);
+        }
+        offset = end;
+    }
+}
+
+fn fingerprint_pdf_file(path: &Path) -> Result<(String, usize), String> {
     let file = std::fs::File::open(path)
         .map_err(|error| format!("Could not read the saved PDF: {error}"))?;
-    let mut bytes = Vec::new();
-    file.take(DEFAULT_MAX_PDF_OUTPUT_BYTES as u64 + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|error| format!("Could not read the saved PDF: {error}"))?;
-    if bytes.len() > DEFAULT_MAX_PDF_OUTPUT_BYTES {
+    let mut reader = file.take(DEFAULT_MAX_PDF_OUTPUT_BYTES as u64 + 1);
+    let mut hasher = Sha256::new();
+    let mut total = 0_usize;
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = reader
+            .read(&mut buffer)
+            .map_err(|error| format!("Could not read the saved PDF: {error}"))?;
+        if read == 0 {
+            break;
+        }
+        total = total.saturating_add(read);
+        hasher.update(&buffer[..read]);
+    }
+    if total > DEFAULT_MAX_PDF_OUTPUT_BYTES {
         return Err(format!(
-            "The saved PDF exceeds ShareGate's {} MB safety-copy limit.",
+            "The saved PDF exceeds VeilSend's {} MB safety-copy limit.",
             DEFAULT_MAX_PDF_OUTPUT_BYTES / 1024 / 1024
         ));
     }
-    Ok(bytes)
+    Ok((format!("{:x}", hasher.finalize()), total))
 }
 
 fn redacted_pdf_name(filename: &str) -> String {
@@ -607,16 +714,38 @@ fn redacted_pdf_name(filename: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sharegate_core::{NormalizedRect, PdfManualRegion, PdfPageRaster, build_flattened_pdf};
     use std::path::PathBuf;
     use std::sync::Arc;
     use uuid::Uuid;
+    use veilsend_core::{NormalizedRect, PdfManualRegion, PdfPageRaster, build_flattened_pdf};
 
     #[test]
     fn names_flattened_copies_without_reusing_the_source_name() {
         assert_eq!(redacted_pdf_name("report.pdf"), "report.redacted.pdf");
         assert_eq!(redacted_pdf_name("REPORT.PDF"), "REPORT.redacted.pdf");
         assert_eq!(redacted_pdf_name("report"), "report.redacted.pdf");
+    }
+
+    #[test]
+    fn compares_temporary_pdf_bytes_without_allocating_a_second_document() {
+        let mut file = tempfile::tempfile().unwrap();
+        file.write_all(b"verified-pdf").unwrap();
+        file.seek(SeekFrom::Start(0)).unwrap();
+        assert!(reader_matches_bytes(&mut file, b"verified-pdf").unwrap());
+
+        file.seek(SeekFrom::Start(0)).unwrap();
+        assert!(!reader_matches_bytes(&mut file, b"different-pdf").unwrap());
+    }
+
+    #[test]
+    fn fingerprints_saved_pdf_files_incrementally() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("saved.pdf");
+        std::fs::write(&path, b"verified-pdf").unwrap();
+
+        let (actual, size) = fingerprint_pdf_file(&path).unwrap();
+        assert_eq!(actual, fingerprint(b"verified-pdf"));
+        assert_eq!(size, b"verified-pdf".len());
     }
 
     #[test]
@@ -698,9 +827,8 @@ mod tests {
             PdfBuildLimits::default(),
         )
         .unwrap();
-        let temp = TempPdf(
-            std::env::temp_dir().join(format!("sharegate-pipeline-{}.pdf", Uuid::new_v4())),
-        );
+        let temp =
+            TempPdf(std::env::temp_dir().join(format!("veilsend-pipeline-{}.pdf", Uuid::new_v4())));
         std::fs::write(&temp.0, &source).unwrap();
         let prepared = crate::pdf_sessions::prepare_pdf_file(&temp.0).unwrap();
         let decisions = prepared
@@ -738,6 +866,18 @@ mod tests {
         assert!(verification.saved_bytes_match);
         assert!(verification.page_count_match);
         assert_eq!(verification.pages_rendered, 1);
+        let mut staged = tempfile::Builder::new()
+            .prefix(".veilsend-test-")
+            .suffix(".pdf")
+            .tempfile()
+            .unwrap();
+        staged.write_all(&rebuilt.bytes).unwrap();
+        staged.as_file().sync_all().unwrap();
+        let staged = staged.into_temp_path();
+        let file_verification = verify_saved_copy_file(&staged, &rebuilt).unwrap();
+        assert!(file_verification.saved_bytes_match);
+        assert!(file_verification.page_count_match);
+        assert_eq!(file_verification.pages_rendered, 1);
 
         let rendered = windows_pdf::render_page(&rebuilt.bytes, 0, DEFAULT_PDF_RENDER_DPI).unwrap();
         let pixels = image::load_from_memory(&rendered.png_bytes)
@@ -866,7 +1006,7 @@ mod tests {
         );
         assert_eq!(std::fs::read(&fixture).unwrap(), source_before);
 
-        if let Some(path) = std::env::var_os("SHAREGATE_PDF_ACCEPTANCE_OUTPUT") {
+        if let Some(path) = std::env::var_os("VEILSEND_PDF_ACCEPTANCE_OUTPUT") {
             let path = PathBuf::from(path);
             if let Some(parent) = path.parent() {
                 std::fs::create_dir_all(parent).unwrap();

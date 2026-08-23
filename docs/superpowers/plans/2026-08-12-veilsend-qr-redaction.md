@@ -1,4 +1,4 @@
-# ShareGate QR Redaction Implementation Plan
+# VeilSend QR Redaction Implementation Plan
 
 ## Goal
 

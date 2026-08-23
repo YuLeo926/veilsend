@@ -1,4 +1,4 @@
-# ShareGate PDF redaction design
+# VeilSend PDF redaction design
 
 ## Status
 
@@ -9,12 +9,12 @@ Approved in chat on 2026-08-23 as the next architectural stage after the local i
 Add a complete offline PDF safety path that lets a Windows user:
 
 1. choose a local PDF without modifying it;
-2. render and inspect every page with ShareGate's existing visible-text, face, QR, and one-dimensional barcode detectors;
+2. render and inspect every page with VeilSend's existing visible-text, face, QR, and one-dimensional barcode detectors;
 3. review automatic findings and add manual opaque cover regions;
 4. rebuild every page into a new image-only PDF;
 5. reread and re-render the actual saved file before reporting a result.
 
-The primary security property is removal by reconstruction. ShareGate does not place annotations or black vector rectangles over the original content stream. The new file contains newly rendered page pixels and a minimal page tree, so original text layers, attachments, scripts, forms, annotations, signatures, document history, and metadata are not copied.
+The primary security property is removal by reconstruction. VeilSend does not place annotations or black vector rectangles over the original content stream. The new file contains newly rendered page pixels and a minimal page tree, so original text layers, attachments, scripts, forms, annotations, signatures, document history, and metadata are not copied.
 
 ## Scope
 
@@ -39,7 +39,7 @@ It does not support password entry, encrypted output, preserving selectable text
 
 Use the operating system's `Windows.Data.Pdf.PdfDocument` and `PdfPage.RenderToStreamAsync` APIs to load source bytes from an in-memory random-access stream and render one page at a time. This matches the existing Windows-native OCR and face adapters, adds no runtime download, and avoids shipping a second native PDF engine.
 
-The Windows adapter serializes document access and page rendering. It initializes the required Windows apartment explicitly and does not assume that PDF document or page objects are thread-safe. A page-rendering failure stops the document workflow because ShareGate cannot reconstruct every page.
+The Windows adapter serializes document access and page rendering. It initializes the required Windows apartment explicitly and does not assume that PDF document or page objects are thread-safe. A page-rendering failure stops the document workflow because VeilSend cannot reconstruct every page.
 
 References:
 
@@ -48,7 +48,7 @@ References:
 
 ### Reconstruction
 
-Use `pdf-writer` 0.15 in `sharegate-core` to construct a new PDF from scratch. Each output page contains exactly one lossless RGB image XObject and one short content stream that paints the image into the page media box. The catalog contains only the new pages tree. The writer does not add an Info dictionary, XMP metadata, outlines, names, actions, forms, annotations, optional-content groups, structure trees, embedded files, or source object references.
+Use `pdf-writer` 0.15 in `veilsend-core` to construct a new PDF from scratch. Each output page contains exactly one lossless RGB image XObject and one short content stream that paints the image into the page media box. The catalog contains only the new pages tree. The writer does not add an Info dictionary, XMP metadata, outlines, names, actions, forms, annotations, optional-content groups, structure trees, embedded files, or source object references.
 
 Rendered RGBA pages are flattened against white, converted to RGB, compressed with Flate, and embedded losslessly. Opaque redaction pixels therefore remain exact in the embedded image rather than being softened by lossy JPEG compression. Original page physical dimensions and final visible orientation are preserved within a small floating-point tolerance; source rotation is normalized into the new page pixels.
 
@@ -59,7 +59,7 @@ References:
 
 ### Alternatives rejected
 
-- Bundled PDFium would improve future cross-platform options, but it requires distributing and updating a separate C++ binary. Its Rust wrapper also states that PDFium must not be assumed thread-safe. That complexity is not justified while ShareGate's OCR and face checks are Windows-specific.
+- Bundled PDFium would improve future cross-platform options, but it requires distributing and updating a separate C++ binary. Its Rust wrapper also states that PDFium must not be assumed thread-safe. That complexity is not justified while VeilSend's OCR and face checks are Windows-specific.
 - Editing the original PDF object graph and placing black annotations or rectangles over content can leave underlying text, incremental revisions, attachments, scripts, and other hidden data recoverable. It conflicts with the approved flattening guarantee.
 - An external Poppler, Ghostscript, browser, or printer command would add installation, process, quoting, licensing, and version-management boundaries. The packaged application must remain self-contained and offline.
 
@@ -173,7 +173,7 @@ Immediately before export, the desktop:
 3. reruns all four detectors and resolves each reviewed automatic decision by detector type, page, opaque ID, and unambiguous geometric overlap;
 4. rejects missing, duplicate, stale, or ambiguous decisions;
 5. validates manual regions and maps them to full-resolution page pixels;
-6. pads and paints selected automatic regions and manual regions with the existing opaque ShareGate ink;
+6. pads and paints selected automatic regions and manual regions with the existing opaque VeilSend ink;
 7. verifies every painted rectangle in the in-memory raster before encoding;
 8. flattens the page to RGB, compresses it losslessly, and adds it to a new image-only PDF;
 9. enforces aggregate pixel, object, and output-byte limits;
@@ -203,9 +203,9 @@ The receipt reports pages rebuilt, redactions by detector type, manual regions, 
 
 ## Error handling
 
-- A PDF that requests a password is rejected with a message that password-protected documents are not supported; ShareGate does not ask for, cache, or log a password.
+- A PDF that requests a password is rejected with a message that password-protected documents are not supported; VeilSend does not ask for, cache, or log a password.
 - A malformed, unsupported, empty, oversized, or over-page-limit file leaves the current session unchanged.
-- A page load, render, or decode failure stops review and export because ShareGate cannot reconstruct the whole document.
+- A page load, render, or decode failure stops review and export because VeilSend cannot reconstruct the whole document.
 - A detector failure preserves findings from completed detectors and may still allow a visual safety copy, but it prevents `Verified`.
 - Detector failures remain visible per page and per detector; successful checks are not erased.
 - Export does not proceed with an expired session, changed source, unresolved decision, or invalid region.
@@ -217,7 +217,7 @@ The receipt reports pages rebuilt, redactions by detector type, manual regions, 
 - `src-tauri/src/windows_pdf.rs` owns WinRT in-memory loading, page dimensions, bounded page rendering, and safe Windows error mapping.
 - `src-tauri/src/pdf_sessions.rs` owns the single active source session, source bytes, fingerprint, preview cache, and page summaries.
 - `src-tauri/src/pdf_pipeline.rs` coordinates sequential inspection, decision resolution, export, save, and post-save verification.
-- `crates/sharegate-core/src/pdf.rs` owns normalized PDF/page models, manual-region validation, lossless page-image reconstruction, fixed object IDs, limits, and output-writer tests.
+- `crates/veilsend-core/src/pdf.rs` owns normalized PDF/page models, manual-region validation, lossless page-image reconstruction, fixed object IDs, limits, and output-writer tests.
 - Existing `image_pipeline.rs` remains the single coordinator for OCR, face, QR, and barcode inspection of one rendered page.
 - `src/components/PdfWorkflow.tsx` owns PDF intake, progress, page navigation, overlays, decisions, manual drawing, and the receipt.
 - `src/lib/pdfWorkflowModel.ts` owns pure interface state transitions and coordinate conversion tests.

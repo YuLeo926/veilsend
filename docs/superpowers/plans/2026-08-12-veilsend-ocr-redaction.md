@@ -1,4 +1,4 @@
-# ShareGate OCR and Visual Redaction Implementation Plan
+# VeilSend OCR and Visual Redaction Implementation Plan
 
 ## Goal
 

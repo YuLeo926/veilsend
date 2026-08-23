@@ -1,4 +1,4 @@
-# ShareGate visual safety expansion design
+# VeilSend visual safety expansion design
 
 ## Status
 
@@ -14,7 +14,7 @@ Extend the existing JPEG and PNG workflow so a Windows user can paste or choose 
 4. one-dimensional barcodes;
 5. hidden metadata.
 
-The work must preserve ShareGate's differentiator: the interface proposes changes, but the trusted desktop process owns source bytes, recomputes detector results before export, rereads the actual saved file, and never reports `Verified` after a partial check.
+The work must preserve VeilSend's differentiator: the interface proposes changes, but the trusted desktop process owns source bytes, recomputes detector results before export, rereads the actual saved file, and never reports `Verified` after a partial check.
 
 ## Scope
 
@@ -32,7 +32,7 @@ It does not add identity recognition, face embeddings, emotion or demographic in
 
 ### Face detection
 
-Use Windows' built-in `FaceDetector` adapter beside the existing Windows OCR adapter. The API is available from Windows 10, reports whether the detector is supported on the current device, accepts a `SoftwareBitmap`, and returns face rectangles. ShareGate will query supported bitmap formats at runtime and convert the decoded image in memory when required.
+Use Windows' built-in `FaceDetector` adapter beside the existing Windows OCR adapter. The API is available from Windows 10, reports whether the detector is supported on the current device, accepts a `SoftwareBitmap`, and returns face rectangles. VeilSend will query supported bitmap formats at runtime and convert the decoded image in memory when required.
 
 This is preferred over bundling an ONNX model because it introduces no model download, no third-party model license, no GPU requirement, and no new network surface. It also keeps the executable small. The adapter detects only the presence and location of a face. It must not create an embedding, infer an identity, or expose biometric attributes.
 
@@ -40,9 +40,9 @@ Microsoft API reference: <https://learn.microsoft.com/en-us/uwp/api/windows.medi
 
 ### One-dimensional barcodes
 
-Use `rxing` 0.9.2 with default features disabled and only decoder, one-dimensional, and multiple-barcode support enabled. This release supports Code 39, Code 93, Code 128, Codabar, EAN-8, EAN-13, ITF, UPC-A, UPC-E, RSS-14, RSS Expanded, and Telepen. ShareGate will explicitly restrict `POSSIBLE_FORMATS` to those formats so QR, Data Matrix, Aztec, MaxiCode, and PDF417 do not duplicate or silently expand the product scope.
+Use `rxing` 0.9.2 with default features disabled and only decoder, one-dimensional, and multiple-barcode support enabled. This release supports Code 39, Code 93, Code 128, Codabar, EAN-8, EAN-13, ITF, UPC-A, UPC-E, RSS-14, RSS Expanded, and Telepen. VeilSend will explicitly restrict `POSSIBLE_FORMATS` to those formats so QR, Data Matrix, Aztec, MaxiCode, and PDF417 do not duplicate or silently expand the product scope.
 
-The detector will enable hard-search and inverted-image hints. Multiple results are deduplicated by format and geometry rather than payload. Returned result points are converted into a conservative axis-aligned rectangle. Because one-dimensional readers often report points along the centre line instead of all four corners, ShareGate expands the minor axis in proportion to the major span and adds a fixed minimum safety margin. Over-redaction is preferable to leaving readable bars.
+The detector will enable hard-search and inverted-image hints. Multiple results are deduplicated by format and geometry rather than payload. Returned result points are converted into a conservative axis-aligned rectangle. Because one-dimensional readers often report points along the centre line instead of all four corners, VeilSend expands the minor axis in proportion to the major span and adds a fixed minimum safety margin. Over-redaction is preferable to leaving readable bars.
 
 `rxing` is a Rust port of ZXing and its multi-reader recursively scans the regions around located codes. Relevant references:
 
@@ -51,7 +51,7 @@ The detector will enable hard-search and inverted-image hints. Multiple results 
 
 ### Screenshot paste
 
-Read bitmap content through `Windows.ApplicationModel.DataTransfer.Clipboard.GetContent` and `DataPackageView.GetBitmapAsync`. Clipboard access is initiated only by a focused user action: the button or `Ctrl+V` while the image add screen is active. ShareGate does not poll or monitor the clipboard.
+Read bitmap content through `Windows.ApplicationModel.DataTransfer.Clipboard.GetContent` and `DataPackageView.GetBitmapAsync`. Clipboard access is initiated only by a focused user action: the button or `Ctrl+V` while the image add screen is active. VeilSend does not poll or monitor the clipboard.
 
 The bitmap stream is copied into a desktop-owned in-memory session and is never written to a temporary source file. The frontend receives a bounded, normalized preview for rendering, but never receives the original encoded clipboard stream as trusted input or as an export source. Export always uses the desktop-owned bytes. Clipboard references:
 
@@ -179,7 +179,7 @@ The second pass is run against bytes read from the actual save destination. It d
 ## Error handling and resource limits
 
 - Empty clipboard or clipboard content without a bitmap produces a concise non-destructive message and leaves the current session unchanged.
-- Clipboard access denied because the window is not focused asks the user to focus ShareGate and paste again.
+- Clipboard access denied because the window is not focused asks the user to focus VeilSend and paste again.
 - Oversized encoded or decoded input uses the same structured limit errors as file input.
 - The detector pipeline is fail-visible per component: one failed detector does not erase successful findings from other detectors, but it prevents `Verified`.
 - Result payloads and logs contain detector names and safe error classes only, never source content.
@@ -189,8 +189,8 @@ The second pass is run against bytes read from the actual save destination. It d
 
 - `src-tauri/windows_faces.rs` owns WinRT bitmap conversion and face rectangles.
 - `src-tauri/windows_clipboard.rs` owns focused bitmap intake and returns encoded bytes to the session layer.
-- `crates/sharegate-core/src/barcode.rs` owns supported-format configuration, decoding, geometry, safe summaries, and barcode tests.
-- `crates/sharegate-core/src/model.rs` owns serialized face/barcode models and generic detector identifiers.
+- `crates/veilsend-core/src/barcode.rs` owns supported-format configuration, decoding, geometry, safe summaries, and barcode tests.
+- `crates/veilsend-core/src/model.rs` owns serialized face/barcode models and generic detector identifiers.
 - `src-tauri/src/lib.rs` owns bounded source sessions, source freshness, detector coordination, decisions, saving, and post-save verification.
 - `src/components/ImageWorkflow.tsx` renders intake, status, overlays, decisions, and receipts without receiving raw detector content.
 
@@ -240,7 +240,7 @@ Use only generated barcodes and a synthetic, non-identifying face fixture. The r
 - Run `cargo audit`, `npm audit`, full tests, formatting, and clippy before release.
 - Confirm the Windows face and clipboard APIs introduce no runtime download.
 - Keep all fixtures synthetic and all encoded examples reserved for testing.
-- Preserve ShareGate's MIT license and do not add a model or library with non-commercial, copyleft, or ambiguous redistribution terms.
+- Preserve VeilSend's MIT license and do not add a model or library with non-commercial, copyleft, or ambiguous redistribution terms.
 
 ## Completion criteria
 

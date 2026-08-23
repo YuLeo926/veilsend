@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useReducer, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import {
   AlertTriangle,
@@ -57,6 +57,52 @@ type ResizeDraft = {
   startY: number;
   initial: NormalizedRect;
 };
+type ManualEditState = {
+  regions: PdfManualRegion[];
+  history: PdfManualRegion[][];
+};
+type ManualEditAction =
+  | { type: "commit"; update: (current: PdfManualRegion[]) => PdfManualRegion[] }
+  | { type: "checkpoint" }
+  | { type: "resize"; id: string; rectangle: NormalizedRect }
+  | { type: "undo" }
+  | { type: "reset" };
+
+function manualEditReducer(
+  state: ManualEditState,
+  action: ManualEditAction,
+): ManualEditState {
+  switch (action.type) {
+    case "commit": {
+      const next = action.update(state.regions);
+      if (next === state.regions) return state;
+      return {
+        regions: next,
+        history: [...state.history, state.regions].slice(-50),
+      };
+    }
+    case "checkpoint":
+      return {
+        ...state,
+        history: [...state.history, state.regions].slice(-50),
+      };
+    case "resize":
+      return {
+        ...state,
+        regions: state.regions.map((region) => region.id === action.id
+          ? { ...region, rectangle: action.rectangle }
+          : region),
+      };
+    case "undo": {
+      const previous = state.history.at(-1);
+      return previous
+        ? { regions: previous, history: state.history.slice(0, -1) }
+        : state;
+    }
+    case "reset":
+      return { regions: [], history: [] };
+  }
+}
 
 const severityLabel: Record<Severity, string> = {
   low: "Notice",
@@ -82,7 +128,7 @@ function readableError(error: unknown): string {
   if (typeof error === "string") return error;
   if (error instanceof Error) return error.message;
   if (error && typeof error === "object" && "message" in error) return String(error.message);
-  return "ShareGate could not process that PDF. The original was not changed.";
+  return "VeilSend could not process that PDF. The original was not changed.";
 }
 
 function pointInPage(event: ReactPointerEvent<HTMLDivElement>) {
@@ -111,8 +157,12 @@ export function PdfWorkflow({
   const [session, setSession] = useState<PdfSession | null>(null);
   const [result, setResult] = useState<CleanedPdfFile | null>(null);
   const [decisions, setDecisions] = useState<Record<string, ImageRedactionDecision>>({});
-  const [manualRegions, setManualRegions] = useState<PdfManualRegion[]>([]);
-  const [manualHistory, setManualHistory] = useState<PdfManualRegion[][]>([]);
+  const [manualEdits, dispatchManualEdit] = useReducer(manualEditReducer, {
+    regions: [],
+    history: [],
+  });
+  const manualRegions = manualEdits.regions;
+  const manualHistory = manualEdits.history;
   const [selectedPage, setSelectedPage] = useState(0);
   const [preview, setPreview] = useState<PdfPagePreview | null>(null);
   const [previewBusy, setPreviewBusy] = useState(false);
@@ -159,8 +209,7 @@ export function PdfWorkflow({
     setSession(null);
     setPreview(null);
     setDecisions({});
-    setManualRegions([]);
-    setManualHistory([]);
+    dispatchManualEdit({ type: "reset" });
     setDraft(null);
     setResizeDraft(null);
     setDrawMode(false);
@@ -186,8 +235,11 @@ export function PdfWorkflow({
   }
 
   async function createSafetyCopy() {
-    if (!session) return;
+    if (!session || busy) return;
     setBusy(true);
+    setDraft(null);
+    setResizeDraft(null);
+    setDrawMode(false);
     onError("");
     try {
       const nextResult = await cleanPdfFile(
@@ -230,7 +282,7 @@ export function PdfWorkflow({
   }
 
   function beginDraw(event: ReactPointerEvent<HTMLDivElement>) {
-    if (!drawMode || event.button !== 0) return;
+    if (busy || !drawMode || event.button !== 0) return;
     const point = pointInPage(event);
     event.currentTarget.setPointerCapture(event.pointerId);
     setDraft({
@@ -276,33 +328,26 @@ export function PdfWorkflow({
   function updateManualRegions(
     update: (current: PdfManualRegion[]) => PdfManualRegion[],
   ) {
-    setManualRegions((current) => {
-      const next = update(current);
-      if (next === current) return current;
-      setManualHistory((history) => [...history, current].slice(-50));
-      return next;
-    });
+    if (busy) return;
+    dispatchManualEdit({ type: "commit", update });
   }
 
   function undoManualChange() {
-    setManualHistory((history) => {
-      const previous = history.at(-1);
-      if (!previous) return history;
-      setManualRegions(previous);
-      return history.slice(0, -1);
-    });
+    if (busy) return;
+    dispatchManualEdit({ type: "undo" });
   }
 
   function beginResize(
     event: ReactPointerEvent<HTMLButtonElement>,
     region: PdfManualRegion,
   ) {
+    if (busy) return;
     event.stopPropagation();
     const layer = event.currentTarget.closest(".pdf-draw-layer");
     if (!(layer instanceof HTMLElement)) return;
     const point = pointInBounds(event.clientX, event.clientY, layer.getBoundingClientRect());
     event.currentTarget.setPointerCapture(event.pointerId);
-    setManualHistory((history) => [...history, manualRegions].slice(-50));
+    dispatchManualEdit({ type: "checkpoint" });
     setResizeDraft({
       id: region.id,
       startX: point.x,
@@ -312,7 +357,7 @@ export function PdfWorkflow({
   }
 
   function updateResize(event: ReactPointerEvent<HTMLButtonElement>) {
-    if (!resizeDraft || !event.currentTarget.hasPointerCapture(event.pointerId)) return;
+    if (busy || !resizeDraft || !event.currentTarget.hasPointerCapture(event.pointerId)) return;
     const layer = event.currentTarget.closest(".pdf-draw-layer");
     if (!(layer instanceof HTMLElement)) return;
     const point = pointInBounds(event.clientX, event.clientY, layer.getBoundingClientRect());
@@ -323,9 +368,7 @@ export function PdfWorkflow({
       point.x,
       point.y,
     );
-    setManualRegions((current) => current.map((region) => region.id === resizeDraft.id
-      ? { ...region, rectangle }
-      : region));
+    dispatchManualEdit({ type: "resize", id: resizeDraft.id, rectangle });
   }
 
   function finishResize(event: ReactPointerEvent<HTMLButtonElement>) {
@@ -341,7 +384,7 @@ export function PdfWorkflow({
         <InputModeTabs active="pdf" onChange={(mode) => mode !== "pdf" && void switchInputMode(mode)} />
         <div className="eyebrow"><Layers3 size={15} /> Flattened document safety</div>
         <h1>Turn a PDF into<br />pixels you can trust.</h1>
-        <p className="lead">Choose a local PDF. ShareGate reviews every page, lets you cover anything the detectors miss, then rebuilds a separate image-only PDF with no searchable or editable text layer.</p>
+        <p className="lead">Choose a local PDF. VeilSend reviews every page, lets you cover anything the detectors miss, then rebuilds a separate image-only PDF with no searchable or editable text layer.</p>
 
         <div className="pdf-picker-card">
           <div className="pdf-picker-visual" aria-hidden="true">
@@ -389,8 +432,8 @@ export function PdfWorkflow({
       session.pages.map((page) => [page.pageIndex, buildPdfPageFindings(page).length]),
     );
     return (
-      <section className="stage-view review-stage pdf-review-stage">
-        <button className="back-button" type="button" onClick={() => onStageChange("add")}><ArrowLeft size={16} /> Choose a different PDF</button>
+      <section className={`stage-view review-stage pdf-review-stage ${busy ? "is-busy" : ""}`} aria-busy={busy}>
+        <button className="back-button" type="button" disabled={busy} onClick={() => onStageChange("add")}><ArrowLeft size={16} /> Choose a different PDF</button>
         <div className="review-heading">
           <div>
             <div className="eyebrow"><FileStack size={15} /> PDF page review</div>
@@ -422,6 +465,7 @@ export function PdfWorkflow({
                   <button
                     className={page.pageIndex === selectedPage ? "selected" : ""}
                     type="button"
+                    disabled={busy}
                     key={page.pageIndex}
                     onClick={() => { setSelectedPage(page.pageIndex); setDraft(null); }}
                     aria-label={`Open page ${page.pageIndex + 1}`}
@@ -441,13 +485,14 @@ export function PdfWorkflow({
               <button
                 className={`manual-cover-toggle ${drawMode ? "active" : ""}`}
                 type="button"
+                disabled={busy}
                 aria-pressed={drawMode}
                 onClick={() => { setDrawMode((current) => !current); setDraft(null); }}
               >
                 <MousePointer2 size={15} /> {drawMode ? "Drawing covers" : "Add manual cover"}
               </button>
             </div>
-            <div className={`pdf-canvas ${drawMode ? "drawing" : ""}`}>
+            <div className={`pdf-canvas ${drawMode && !busy ? "drawing" : ""}`}>
               {previewBusy && <div className="pdf-preview-loading"><LoaderCircle className="spin" size={21} /> Rendering page locally…</div>}
               <div className="pdf-page-wrap">
                 <img src={displayedPreview} alt={`PDF page ${selectedPage + 1}`} draggable={false} />
@@ -485,6 +530,7 @@ export function PdfWorkflow({
                       <button
                         className="pdf-resize-handle"
                         type="button"
+                        disabled={busy}
                         aria-label={`Resize manual cover ${index + 1}`}
                         onPointerDown={(event) => beginResize(event, region)}
                         onPointerMove={updateResize}
@@ -537,6 +583,7 @@ export function PdfWorkflow({
                   <button
                     className={`visual-decision ${selected ? "selected" : ""}`}
                     type="button"
+                    disabled={busy}
                     aria-pressed={selected}
                     onClick={() => setDecisions((current) => ({
                       ...current,
@@ -552,10 +599,10 @@ export function PdfWorkflow({
               <span>Manual covers</span>
               <div className="pdf-manual-actions">
                 <b>{currentManual.length}</b>
-                <button type="button" disabled={!manualHistory.length} onClick={undoManualChange} aria-label="Undo last manual cover change"><Undo2 size={12} /></button>
+                <button type="button" disabled={busy || !manualHistory.length} onClick={undoManualChange} aria-label="Undo last manual cover change"><Undo2 size={12} /></button>
                 <button
                   type="button"
-                  disabled={!currentManual.length}
+                  disabled={busy || !currentManual.length}
                   onClick={() => updateManualRegions((current) => current.filter((region) => region.pageIndex !== selectedPage))}
                   aria-label="Clear manual covers from this page"
                 ><Trash2 size={12} /></button>
@@ -564,7 +611,7 @@ export function PdfWorkflow({
             {currentManual.map((region, index) => (
               <div className="manual-region-row" key={region.id}>
                 <span>M{index + 1}</span><div><strong>Opaque cover</strong><small>{Math.round(region.rectangle.width * 100)}% × {Math.round(region.rectangle.height * 100)}% of page</small></div>
-                <button type="button" onClick={() => updateManualRegions((current) => current.filter((item) => item.id !== region.id))} aria-label={`Delete manual cover ${index + 1}`}><Trash2 size={14} /></button>
+                <button type="button" disabled={busy} onClick={() => updateManualRegions((current) => current.filter((item) => item.id !== region.id))} aria-label={`Delete manual cover ${index + 1}`}><Trash2 size={14} /></button>
               </div>
             ))}
             {!currentManual.length && <p className="manual-cover-hint">Use “Add manual cover,” then drag over anything you do not want visible.</p>}
@@ -621,12 +668,14 @@ export function PdfWorkflow({
             <div><strong>{result.pagesRebuilt}</strong><span>pages rebuilt as images</span></div>
             <div><strong>{result.redactedFindings}</strong><span>automatic findings covered</span></div>
             <div><strong>{result.manualRegions}</strong><span>manual covers applied</span></div>
-            <div className={remaining ? "review" : ""}><strong>{remaining}</strong><span>unexpected risks remaining</span></div>
+            <div className={remaining ? "review" : ""}><strong>{remaining}</strong><span>findings remaining after save</span></div>
           </div>
           <div className="pdf-verification-ledger">
             <span className={result.verification.savedBytesMatch ? "checked" : "review"}>{result.verification.savedBytesMatch ? <Check size={13} /> : <AlertTriangle size={13} />} Saved bytes match</span>
             <span className={result.verification.pageCountMatch ? "checked" : "review"}>{result.verification.pageCountMatch ? <Check size={13} /> : <AlertTriangle size={13} />} Page count and sizes match</span>
-            <span className={result.verification.ocrChecked && result.verification.faceChecked && result.verification.qrChecked && result.verification.barcodeChecked ? "checked" : "review"}><Check size={13} /> Saved pages re-rendered and checked</span>
+            {result.verification.ocrChecked && result.verification.faceChecked && result.verification.qrChecked && result.verification.barcodeChecked
+              ? <span className="checked"><Check size={13} /> Saved pages re-rendered and checked</span>
+              : <span className="review"><AlertTriangle size={13} /> One or more saved-page checks incomplete</span>}
           </div>
           {withExceptions && <div className="exception-result"><AlertTriangle size={15} /> {result.exceptions} explicit Keep exception{result.exceptions === 1 ? "" : "s"}; those regions are not claimed safe.</div>}
           <div className="saved-path"><Check size={14} /> Saved to {result.savedPath}</div>

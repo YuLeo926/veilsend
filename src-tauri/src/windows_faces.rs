@@ -1,4 +1,4 @@
-use sharegate_core::{
+use veilsend_core::{
     FaceAvailability, FaceFinding, ImageFaceInspection, ImageRect, Severity, fingerprint,
 };
 
@@ -129,7 +129,7 @@ fn inspection_from_detection(
                     FaceFinding {
                         id: format!("face-{}", &fingerprint(region_key.as_bytes())[..16]),
                         label: "Face".to_owned(),
-                        explanation: "A visible face can identify a person. ShareGate detects only its location and does not infer identity or personal attributes."
+                        explanation: "A visible face can identify a person. VeilSend detects only its location and does not infer identity or personal attributes."
                             .to_owned(),
                         severity: Severity::High,
                         rectangle,
@@ -226,7 +226,7 @@ fn clamp_outward(
 
 #[cfg(test)]
 mod tests {
-    use sharegate_core::{FaceAvailability, ImageRect};
+    use veilsend_core::{FaceAvailability, ImageRect};
 
     use super::*;
 
@@ -269,7 +269,7 @@ mod tests {
         assert_eq!(inspection.findings.len(), 1);
         assert_eq!(
             inspection.findings[0].severity,
-            sharegate_core::Severity::High
+            veilsend_core::Severity::High
         );
         assert_eq!(inspection.findings[0].label, "Face");
         assert!(!serde_json::to_string(&inspection).unwrap().contains("crop"));

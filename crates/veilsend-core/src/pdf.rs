@@ -1,4 +1,4 @@
-use crate::{ImageRect, NormalizedRect, ShareGateError};
+use crate::{ImageRect, NormalizedRect, VeilSendError};
 use flate2::{Compression, read::ZlibDecoder, write::ZlibEncoder};
 use pdf_writer::{Content, Filter, Finish, Name, Pdf, Rect, Ref};
 use std::io::{Read, Write};
@@ -9,6 +9,8 @@ pub const DEFAULT_MAX_PDF_PAGE_PIXELS: u64 = 40_000_000;
 pub const DEFAULT_MAX_PDF_TOTAL_PIXELS: u64 = 120_000_000;
 pub const DEFAULT_MAX_PDF_OUTPUT_BYTES: usize = 300 * 1024 * 1024;
 pub const DEFAULT_PDF_RENDER_DPI: u32 = 144;
+const PDF_WRITER_FINALIZATION_BUDGET: usize = 64 * 1024;
+const PDF_WRITER_PAGE_OVERHEAD_BUDGET: usize = 2 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PdfBuildLimits {
@@ -47,11 +49,97 @@ pub struct PdfPageImage {
     pub compressed_rgb_bytes: Vec<u8>,
 }
 
+pub struct PdfImageDocumentBuilder {
+    pdf: Pdf,
+    limits: PdfBuildLimits,
+    expected_pages: usize,
+    written_pages: usize,
+    total_pixels: u64,
+}
+
+impl PdfImageDocumentBuilder {
+    pub fn new(expected_pages: usize, limits: PdfBuildLimits) -> Result<Self, VeilSendError> {
+        if expected_pages == 0 {
+            return Err(invalid_pdf("A safety copy needs at least one page."));
+        }
+        if expected_pages > limits.max_pages {
+            return Err(invalid_pdf(
+                "The PDF has more pages than the local safety limit.",
+            ));
+        }
+
+        let catalog_id = Ref::new(1);
+        let page_tree_id = Ref::new(2);
+        let page_ids = (0..expected_pages)
+            .map(|index| page_refs(index).0)
+            .collect::<Vec<_>>();
+        let mut pdf = Pdf::new();
+        pdf.catalog(catalog_id).pages(page_tree_id);
+        pdf.pages(page_tree_id)
+            .kids(page_ids.iter().copied())
+            .count(
+                i32::try_from(expected_pages)
+                    .map_err(|_| invalid_pdf("The PDF page count exceeds the writer limit."))?,
+            );
+
+        Ok(Self {
+            pdf,
+            limits,
+            expected_pages,
+            written_pages: 0,
+            total_pixels: 0,
+        })
+    }
+
+    pub fn push_page(&mut self, page: &PdfPageImage) -> Result<(), VeilSendError> {
+        if self.written_pages >= self.expected_pages {
+            return Err(invalid_pdf(
+                "The flattened PDF received more pages than expected.",
+            ));
+        }
+        validate_image(page, self.limits, &mut self.total_pixels)?;
+        let projected = self
+            .pdf
+            .len()
+            .saturating_add(page.compressed_rgb_bytes.len())
+            .saturating_add(PDF_WRITER_PAGE_OVERHEAD_BUDGET)
+            .saturating_add(PDF_WRITER_FINALIZATION_BUDGET);
+        if projected > self.limits.max_output_bytes {
+            return Err(invalid_pdf(
+                "The flattened PDF exceeds the saved-file limit.",
+            ));
+        }
+        write_page(&mut self.pdf, self.written_pages, page)?;
+        self.written_pages += 1;
+        if self.pdf.len() > self.limits.max_output_bytes {
+            return Err(invalid_pdf(
+                "The flattened PDF exceeds the saved-file limit.",
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn finish(self) -> Result<Vec<u8>, VeilSendError> {
+        if self.written_pages != self.expected_pages {
+            return Err(invalid_pdf(
+                "The flattened PDF did not receive every expected page.",
+            ));
+        }
+        let output = self.pdf.finish();
+        if output.len() > self.limits.max_output_bytes {
+            return Err(invalid_pdf(
+                "The flattened PDF exceeds the saved-file limit.",
+            ));
+        }
+        Ok(output)
+    }
+}
+
 pub fn normalized_rect_to_pixels(
     rect: NormalizedRect,
     width: u32,
     height: u32,
-) -> Result<ImageRect, ShareGateError> {
+) -> Result<ImageRect, VeilSendError> {
     const EDGE_EPSILON: f64 = 1e-9;
     const MIN_NORMALIZED_DIMENSION: f64 = 0.001;
 
@@ -107,22 +195,23 @@ pub fn normalized_rect_to_pixels(
 pub fn build_flattened_pdf(
     pages: &[PdfPageRaster],
     limits: PdfBuildLimits,
-) -> Result<Vec<u8>, ShareGateError> {
-    let compressed = pages
-        .iter()
-        .map(|page| compress_pdf_page_with_limits(page, limits))
-        .collect::<Result<Vec<_>, _>>()?;
-    build_flattened_pdf_from_images(&compressed, limits)
+) -> Result<Vec<u8>, VeilSendError> {
+    let mut builder = PdfImageDocumentBuilder::new(pages.len(), limits)?;
+    for page in pages {
+        let compressed = compress_pdf_page_with_limits(page, limits)?;
+        builder.push_page(&compressed)?;
+    }
+    builder.finish()
 }
 
-pub fn compress_pdf_page(page: &PdfPageRaster) -> Result<PdfPageImage, ShareGateError> {
+pub fn compress_pdf_page(page: &PdfPageRaster) -> Result<PdfPageImage, VeilSendError> {
     compress_pdf_page_with_limits(page, PdfBuildLimits::default())
 }
 
 fn compress_pdf_page_with_limits(
     page: &PdfPageRaster,
     limits: PdfBuildLimits,
-) -> Result<PdfPageImage, ShareGateError> {
+) -> Result<PdfPageImage, VeilSendError> {
     let mut total_pixels = 0;
     validate_raster(page, limits, &mut total_pixels)?;
     Ok(PdfPageImage {
@@ -137,46 +226,12 @@ fn compress_pdf_page_with_limits(
 pub fn build_flattened_pdf_from_images(
     pages: &[PdfPageImage],
     limits: PdfBuildLimits,
-) -> Result<Vec<u8>, ShareGateError> {
-    if pages.is_empty() {
-        return Err(invalid_pdf("A safety copy needs at least one page."));
-    }
-    if pages.len() > limits.max_pages {
-        return Err(invalid_pdf(
-            "The PDF has more pages than the local safety limit.",
-        ));
-    }
-
-    let mut total_pixels = 0_u64;
+) -> Result<Vec<u8>, VeilSendError> {
+    let mut builder = PdfImageDocumentBuilder::new(pages.len(), limits)?;
     for page in pages {
-        validate_image(page, limits, &mut total_pixels)?;
+        builder.push_page(page)?;
     }
-
-    let catalog_id = Ref::new(1);
-    let page_tree_id = Ref::new(2);
-    let page_ids = (0..pages.len())
-        .map(|index| page_refs(index).0)
-        .collect::<Vec<_>>();
-    let mut pdf = Pdf::new();
-    pdf.catalog(catalog_id).pages(page_tree_id);
-    pdf.pages(page_tree_id)
-        .kids(page_ids.iter().copied())
-        .count(
-            i32::try_from(pages.len())
-                .map_err(|_| invalid_pdf("The PDF page count exceeds the writer limit."))?,
-        );
-
-    for (index, page) in pages.iter().enumerate() {
-        write_page(&mut pdf, index, page)?;
-    }
-
-    let output = pdf.finish();
-    if output.len() > limits.max_output_bytes {
-        return Err(invalid_pdf(
-            "The flattened PDF exceeds the saved-file limit.",
-        ));
-    }
-    Ok(output)
+    builder.finish()
 }
 
 fn snapped_floor(value: f64) -> f64 {
@@ -201,7 +256,7 @@ fn validate_raster(
     page: &PdfPageRaster,
     limits: PdfBuildLimits,
     total_pixels: &mut u64,
-) -> Result<(), ShareGateError> {
+) -> Result<(), VeilSendError> {
     let pixels = validate_dimensions(
         page.width_pixels,
         page.height_pixels,
@@ -224,7 +279,7 @@ fn validate_image(
     page: &PdfPageImage,
     limits: PdfBuildLimits,
     total_pixels: &mut u64,
-) -> Result<(), ShareGateError> {
+) -> Result<(), VeilSendError> {
     let pixels = validate_dimensions(
         page.width_pixels,
         page.height_pixels,
@@ -257,7 +312,7 @@ fn validate_dimensions(
     height_points: f32,
     limits: PdfBuildLimits,
     total_pixels: &mut u64,
-) -> Result<u64, ShareGateError> {
+) -> Result<u64, VeilSendError> {
     if width_pixels == 0 || height_pixels == 0 {
         return Err(invalid_pdf("A PDF page has zero pixel dimensions."));
     }
@@ -292,7 +347,7 @@ fn page_refs(index: usize) -> (Ref, Ref, Ref) {
     (Ref::new(base), Ref::new(base + 1), Ref::new(base + 2))
 }
 
-fn write_page(pdf: &mut Pdf, index: usize, page: &PdfPageImage) -> Result<(), ShareGateError> {
+fn write_page(pdf: &mut Pdf, index: usize, page: &PdfPageImage) -> Result<(), VeilSendError> {
     const IMAGE_NAME: Name<'static> = Name(b"Im0");
     let (page_id, image_id, content_id) = page_refs(index);
     let media_box = Rect::new(0.0, 0.0, page.width_points, page.height_points);
@@ -330,7 +385,7 @@ fn write_page(pdf: &mut Pdf, index: usize, page: &PdfPageImage) -> Result<(), Sh
     Ok(())
 }
 
-fn compress_rgb(bytes: &[u8]) -> Result<Vec<u8>, ShareGateError> {
+fn compress_rgb(bytes: &[u8]) -> Result<Vec<u8>, VeilSendError> {
     let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
     encoder
         .write_all(bytes)
@@ -340,8 +395,8 @@ fn compress_rgb(bytes: &[u8]) -> Result<Vec<u8>, ShareGateError> {
         .map_err(|_| invalid_pdf("A PDF page could not finish compression."))
 }
 
-fn invalid_pdf(message: &str) -> ShareGateError {
-    ShareGateError::InvalidPdf(message.to_owned())
+fn invalid_pdf(message: &str) -> VeilSendError {
+    VeilSendError::InvalidPdf(message.to_owned())
 }
 
 #[cfg(test)]
@@ -466,6 +521,21 @@ mod tests {
             .read_to_end(&mut decoded)
             .unwrap();
         assert_eq!(decoded, rgb);
+    }
+
+    #[test]
+    fn incremental_builder_requires_exactly_the_declared_pages() {
+        let raster = page(2, 3, 72.0, 108.0);
+        let compressed = compress_pdf_page(&raster).unwrap();
+
+        let mut missing = PdfImageDocumentBuilder::new(2, PdfBuildLimits::default()).unwrap();
+        missing.push_page(&compressed).unwrap();
+        assert!(missing.finish().is_err());
+
+        let mut extra = PdfImageDocumentBuilder::new(1, PdfBuildLimits::default()).unwrap();
+        extra.push_page(&compressed).unwrap();
+        assert!(extra.push_page(&compressed).is_err());
+        assert!(extra.finish().is_ok());
     }
 
     fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {

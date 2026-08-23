@@ -86,7 +86,7 @@ function readableError(error: unknown): string {
     const values = Object.values(error);
     if (values.length) return String(values.at(-1));
   }
-  return "ShareGate could not process that image. The original was not changed.";
+  return "VeilSend could not process that image. The original was not changed.";
 }
 
 export function ImageWorkflow({
@@ -230,7 +230,7 @@ export function ImageWorkflow({
         <InputModeTabs active="image" onChange={(mode) => mode !== "image" && void switchInputMode(mode)} />
         <div className="eyebrow"><Fingerprint size={15} /> Five local image checks</div>
         <h1>Find what the image<br />should not reveal.</h1>
-        <p className="lead">Choose a JPEG or PNG, or paste a screenshot. ShareGate checks visible text, faces, QR codes, one-dimensional barcodes, and hidden metadata—all locally.</p>
+        <p className="lead">Choose a JPEG or PNG, or paste a screenshot. VeilSend checks visible text, faces, QR codes, one-dimensional barcodes, and hidden metadata—all locally.</p>
 
         <div className="image-picker-card">
           <div className="image-picker-visual" aria-hidden="true">
@@ -292,7 +292,7 @@ export function ImageWorkflow({
           <div>
             <div className="eyebrow"><ScanLine size={15} /> Image safety review</div>
             <h1>{totalFindings ? `${totalFindings} risk${totalFindings === 1 ? "" : "s"} found.` : "No supported risks found."}</h1>
-            <p>{totalFindings ? "Text, face, QR, and barcode regions start selected for opaque pixel redaction. Hidden metadata is always removed from the separate copy." : "ShareGate can still make a separate copy and repeat all five checks before reporting a result."}</p>
+            <p>{totalFindings ? "Text, face, QR, and barcode regions start selected for opaque pixel redaction. Hidden metadata is always removed from the separate copy." : "VeilSend can still make a separate copy and repeat all five checks before reporting a result."}</p>
           </div>
           <div className="scan-receipt">
             <span>IMAGE RECEIPT</span>
@@ -573,7 +573,7 @@ export function ImageWorkflow({
             <p>{result.verification.message}</p>
           </div>
           <div className="verification-ticket">
-            <span>SHAREGATE CHECK</span>
+            <span>VEILSEND CHECK</span>
             <strong>{passed ? "PASSED" : "REVIEW"}</strong>
             <small>{remainingRiskCount(result)} supported risks remain</small>
           </div>

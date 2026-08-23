@@ -1,12 +1,12 @@
-# ShareGate Flattened PDF Redaction Implementation Plan
+# VeilSend Flattened PDF Redaction Implementation Plan
 
-**Goal:** Add a Windows desktop PDF workflow that renders every page locally, reuses ShareGate's four visual detectors, supports automatic and manual opaque redaction, rebuilds an image-only PDF, and verifies the actual saved file.
+**Goal:** Add a Windows desktop PDF workflow that renders every page locally, reuses VeilSend's four visual detectors, supports automatic and manual opaque redaction, rebuilds an image-only PDF, and verifies the actual saved file.
 
 **Architecture:** Keep page-image reconstruction and coordinate validation in the reusable Rust core. Put `Windows.Data.Pdf` rendering, the in-memory source session, and multi-page orchestration in focused Tauri modules. Reuse the existing one-page visual detector bundle, expose only safe page summaries to React, and treat the saved byte fingerprint plus a full saved-page rerender as the final trust boundary.
 
 **Tech stack:** Rust 2024, Tauri 2, Windows Runtime `Windows.Data.Pdf`, `pdf-writer` 0.15.0, `flate2` 1.1.9, React 19, TypeScript 5.9, Vitest 4.
 
-**Spec:** `docs/superpowers/specs/2026-08-23-sharegate-pdf-redaction-design.md`
+**Spec:** `docs/superpowers/specs/2026-08-23-veilsend-pdf-redaction-design.md`
 
 ## Global constraints
 
@@ -27,10 +27,10 @@
 
 **Files:**
 
-- Modify: `crates/sharegate-core/Cargo.toml`
-- Create: `crates/sharegate-core/src/pdf.rs`
-- Modify: `crates/sharegate-core/src/model.rs`
-- Modify: `crates/sharegate-core/src/lib.rs`
+- Modify: `crates/veilsend-core/Cargo.toml`
+- Create: `crates/veilsend-core/src/pdf.rs`
+- Modify: `crates/veilsend-core/src/model.rs`
+- Modify: `crates/veilsend-core/src/lib.rs`
 - Modify: `Cargo.lock`
 
 **Interfaces:**
@@ -38,8 +38,8 @@
 - `PdfPageRaster { width_pixels, height_pixels, width_points, height_points, rgb_bytes }`
 - `NormalizedRect { x, y, width, height }`
 - `PdfManualRegion { id, page_index, rectangle }`
-- `normalized_rect_to_pixels(rect, width, height) -> Result<ImageRect, ShareGateError>`
-- `build_flattened_pdf(pages, limits) -> Result<Vec<u8>, ShareGateError>`
+- `normalized_rect_to_pixels(rect, width, height) -> Result<ImageRect, VeilSendError>`
+- `build_flattened_pdf(pages, limits) -> Result<Vec<u8>, VeilSendError>`
 
 - [x] Add exact `pdf-writer = "=0.15.0"` and `flate2 = "=1.1.9"` dependencies.
 - [x] Write failing tests for NaN, infinity, empty, tiny, out-of-range, overflow, and edge-clamped normalized rectangles.
@@ -47,7 +47,7 @@
 - [x] Write a failing two-page writer test covering portrait and landscape sizes, one image XObject per page, deterministic object ordering, and absence of forbidden catalog keys and source marker strings.
 - [x] Implement a minimal PDF 1.7 catalog, pages tree, page/image/content triples, lossless RGB Flate streams, physical page boxes, and checked object IDs.
 - [x] Add tests for output/page/pixel limits, exact redaction ink in embedded RGB streams after decompression, and no Info/XMP/actions/forms/annotations/names/attachments/outlines/structure entries.
-- [x] Run `cargo test -p sharegate-core pdf` and `cargo clippy -p sharegate-core --all-targets -- -D warnings`.
+- [x] Run `cargo test -p veilsend-core pdf` and `cargo clippy -p veilsend-core --all-targets -- -D warnings`.
 - [x] Commit: `feat: add flattened PDF reconstruction core`.
 
 ---
@@ -79,7 +79,7 @@
 - [x] Reuse `inspect_visual()` sequentially for each page, retain 320-pixel thumbnails and safe findings, and discard full-resolution pixels after each page.
 - [x] Implement one selected-page preview cache capped at 1,600 pixels; preview requests never return source bytes.
 - [x] Add a non-Windows adapter that compiles and returns an explicit unavailable state.
-- [x] Run `cargo test -p sharegate pdf_sessions::tests`, `cargo check --workspace`, and an ignored Windows renderer fixture test.
+- [x] Run `cargo test -p veilsend pdf_sessions::tests`, `cargo check --workspace`, and an ignored Windows renderer fixture test.
 - [x] Commit: `feat: add Windows in-memory PDF inspection sessions`.
 
 ---
@@ -150,7 +150,7 @@
 
 - Create: `fixtures/pdf-sensitive-sample.pdf`
 - Create: `fixtures/pdf-sensitive-attachment.txt`
-- Create: `crates/sharegate-core/examples/make_pdf_fixture.rs` or a documented development-only fixture script
+- Create: `crates/veilsend-core/examples/make_pdf_fixture.rs` or a documented development-only fixture script
 - Modify: `README.md`
 - Modify: `SECURITY.md`
 - Modify: `docs/development.md`

@@ -1,8 +1,8 @@
 [package]
-name = "sharegate-core"
+name = "veilsend-core"
 version = "0.1.0"
 edition = "2024"
-description = "Local scan, sanitize, and verification engine for ShareGate"
+description = "Local scan, sanitize, and verification engine for VeilSend"
 license = "MIT"
 
 [dependencies]

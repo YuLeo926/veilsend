@@ -1,6 +1,6 @@
-# ShareGate Security Policy
+# VeilSend Security Policy
 
-ShareGate handles content that may contain credentials and personal information. Security and privacy defects are treated as high priority.
+VeilSend handles content that may contain credentials and personal information. Security and privacy defects are treated as high priority.
 
 ## Reporting a vulnerability
 
@@ -14,7 +14,7 @@ The current `main` branch is a pre-release foundation. There are no supported pu
 
 ## Threat model for v0.1
 
-ShareGate aims to reduce accidental disclosure while a user prepares local text, screenshots, images, or PDFs for sharing. It protects against common, recognizable secret and PII patterns in supported text, applies those rules to locally recognized visual text, locates faces, QR codes, and supported one-dimensional barcodes, irreversibly covers user-selected regions, removes supported privacy metadata from JPEG and PNG copies, and rebuilds PDF pages as controlled lossless images.
+VeilSend aims to reduce accidental disclosure while a user prepares local text, screenshots, images, or PDFs for sharing. It protects against common, recognizable secret and PII patterns in supported text, applies those rules to locally recognized visual text, locates faces, QR codes, and supported one-dimensional barcodes, irreversibly covers user-selected regions, removes supported privacy metadata from JPEG and PNG copies, and rebuilds PDF pages as controlled lossless images.
 
 It does not protect against:
 
@@ -29,7 +29,7 @@ It does not protect against:
 - deliberate disclosure by the local user;
 - compliance, legal, or regulatory requirements.
 
-The application must never describe an output as universally safe. For text, `Verified` means the completed post-clean scan found no matches from enabled ShareGate rules. For metadata-only images, it means supported privacy metadata was absent and the encoded pixel stream matched the source fingerprint. For visually redacted images, it means the saved PNG had no supported metadata findings and completed second passes found no unexpected sensitive text, face, QR, or supported one-dimensional barcode. For PDFs, it means the actual saved bytes matched the controlled image-only reconstruction, every page retained its reviewed size, every selected cover remained opaque after rerendering, and all supported saved-page detectors completed with no exceptions or unexpected findings. Windows OCR and the selected face path do not provide an application-facing confidence score, so the interface must never invent one.
+The application must never describe an output as universally safe. For text, `Verified` means the completed post-clean scan found no matches from enabled VeilSend rules. For metadata-only images, it means supported privacy metadata was absent and the encoded pixel stream matched the source fingerprint. For visually redacted images, it means the saved PNG had no supported metadata findings and completed second passes found no unexpected sensitive text, face, QR, or supported one-dimensional barcode. For PDFs, it means a byte-identical staged copy matched the controlled image-only reconstruction, every page retained its reviewed size, every selected cover remained opaque after rerendering, all supported saved-page detectors completed with no exceptions or unexpected findings, and the verified file was published without replacing another path while retaining its size and SHA-256. Windows OCR and the selected face path do not provide an application-facing confidence score, so the interface must never invent one.
 
 ## Development rules
 
@@ -53,4 +53,4 @@ The application must never describe an output as universally safe. For text, `Ve
 - Scope automatic finding identities by page, require an exact decision set, rerender immutable reviewed bytes at export, and geometrically rematch findings instead of trusting frontend geometry.
 - Validate normalized manual PDF regions again in Rust, enforce per-page and per-document limits, and verify every selected region was painted with opaque pixels.
 - Reconstruct PDF output from a new minimal catalog, page tree, lossless RGB image, and content stream per page. Never copy source text streams, metadata, actions, forms, annotations, names, attachments, outlines, signatures, or structure entries.
-- Never overwrite the PDF source. Reread the destination, require exact generated-byte equality, reload it through the independent Windows renderer, compare page count and physical sizes, verify opaque covers, and rerun every visual detector.
+- Never overwrite the PDF source or an existing destination. Compare a same-folder temporary PDF byte-for-byte with the generated buffer, release the duplicate buffer, reload that staged file through the independent Windows renderer, compare page count and physical sizes, verify opaque covers, rerun every visual detector, then publish it without clobbering and recheck the final size and SHA-256.

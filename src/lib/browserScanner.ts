@@ -231,7 +231,7 @@ export async function sanitizeInBrowser(request: SanitizeRequest): Promise<Sanit
       ? "needsReview"
       : "verified";
   const message = status === "verified"
-    ? "No enabled ShareGate rule found sensitive content in the cleaned copy."
+    ? "No enabled VeilSend rule found sensitive content in the cleaned copy."
     : status === "cleanedWithExceptions"
       ? `Cleaning finished with ${exceptions} user-approved exception(s).`
       : `${report.findings.length} finding(s) remain after cleaning. Review the output before sharing.`;

@@ -13,22 +13,22 @@ use std::time::Instant;
 use sha2::{Digest, Sha256};
 
 pub use barcode::inspect_barcodes;
-pub use error::ShareGateError;
+pub use error::VeilSendError;
 pub use image::{DEFAULT_MAX_IMAGE_BYTES, inspect_image, sanitize_image};
 pub use model::*;
 pub use pdf::{
     DEFAULT_MAX_PDF_OUTPUT_BYTES, DEFAULT_MAX_PDF_PAGE_PIXELS, DEFAULT_MAX_PDF_PAGES,
     DEFAULT_MAX_PDF_SOURCE_BYTES, DEFAULT_MAX_PDF_TOTAL_PIXELS, DEFAULT_PDF_RENDER_DPI,
-    PdfBuildLimits, PdfPageImage, PdfPageRaster, build_flattened_pdf,
+    PdfBuildLimits, PdfImageDocumentBuilder, PdfPageImage, PdfPageRaster, build_flattened_pdf,
     build_flattened_pdf_from_images, compress_pdf_page, normalized_rect_to_pixels,
 };
 pub use qr::inspect_qr_codes;
 pub use sanitize::sanitize;
 pub use visual::{map_ocr_findings, redact_image};
 
-pub fn scan(text: &str, options: ScanOptions) -> Result<ScanReport, ShareGateError> {
+pub fn scan(text: &str, options: ScanOptions) -> Result<ScanReport, VeilSendError> {
     if text.len() > options.max_bytes {
-        return Err(ShareGateError::ContentTooLarge(options.max_bytes));
+        return Err(VeilSendError::ContentTooLarge(options.max_bytes));
     }
 
     let started = Instant::now();
@@ -250,6 +250,6 @@ mod tests {
             options: ScanOptions::default(),
         })
         .unwrap_err();
-        assert!(matches!(error, ShareGateError::StaleContent));
+        assert!(matches!(error, VeilSendError::StaleContent));
     }
 }

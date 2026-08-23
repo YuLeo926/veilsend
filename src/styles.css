@@ -368,6 +368,8 @@ button { color: inherit; }
 .pdf-review-stage { max-width: 1120px; }
 .pdf-review-workbench { margin-top: 30px; display: grid; grid-template-columns: 142px minmax(330px, 1fr) 310px; gap: 14px; align-items: start; }
 .pdf-page-rail, .pdf-page-stage, .pdf-inspector { border: 1px solid var(--line-dark); background: rgba(249,247,241,.86); box-shadow: 6px 8px 0 rgba(60,53,42,.055); }
+.pdf-review-stage.is-busy .pdf-review-workbench { opacity: .68; transition: opacity .15s ease; }
+.pdf-review-stage.is-busy button:disabled { cursor: wait; }
 .pdf-page-rail { position: sticky; top: 22px; overflow: hidden; border-radius: 10px 10px 10px 3px; }
 .pdf-rail-heading, .pdf-inspector-heading { min-height: 40px; padding: 0 12px; display: flex; align-items: center; justify-content: space-between; color: var(--muted); border-bottom: 1px solid var(--line); background: rgba(235,230,219,.62); font-size: 8px; font-weight: 850; letter-spacing: .11em; text-transform: uppercase; }
 .pdf-rail-heading b, .pdf-inspector-heading b { min-width: 20px; height: 20px; display: grid; place-items: center; color: var(--ink); border: 1px solid var(--line-dark); border-radius: 50%; font-size: 8px; }

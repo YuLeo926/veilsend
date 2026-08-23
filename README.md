@@ -1,10 +1,10 @@
-# ShareGate
+# VeilSend
 
 **Scan anything before it leaves your computer.**
 
-ShareGate is a local-first outbound safety gate for text, logs, configuration files, screenshots, images, and PDFs. It detects likely credentials and personal context, finds faces, QR codes, one-dimensional barcodes, and hidden image metadata, irreversibly covers selected visual risks, produces a separate clean copy, and verifies the actual saved output before it is shared.
+VeilSend is a local-first outbound safety gate for text, logs, configuration files, screenshots, images, and PDFs. It detects likely credentials and personal context, finds faces, QR codes, one-dimensional barcodes, and hidden image metadata, irreversibly covers selected visual risks, produces a separate clean copy, and verifies the actual saved output before it is shared.
 
-> ShareGate reduces accidental disclosure. It does not guarantee that content is safe and is not a compliance product.
+> VeilSend reduces accidental disclosure. It does not guarantee that content is safe and is not a compliance product.
 
 ## Current milestone
 
@@ -25,7 +25,7 @@ Milestone D includes the complete text and image workflows plus a Windows-only f
 - review each proposed visual redaction, with every finding selected by default;
 - state explicitly that Windows OCR does not provide a confidence score;
 - cover selected regions with opaque pixels and export a separate metadata-free PNG;
-- rerun Windows OCR and the ShareGate rules against the saved file before reporting success;
+- rerun Windows OCR and the VeilSend rules against the saved file before reporting success;
 - detect multiple and rotated QR codes locally and classify them without returning decoded payloads to the interface;
 - keep undecodable extracted QR regions visible for review instead of treating them as safe;
 - redact selected QR regions with opaque pixels and repeat QR detection on the saved PNG;
@@ -57,7 +57,7 @@ React + TypeScript review interface
               |
        Tauri command boundary
               |
- Windows PDF/OCR/face/clipboard adapters + sharegate-core (Rust)
+ Windows PDF/OCR/face/clipboard adapters + veilsend-core (Rust)
        inspect -> clean -> verify
 ```
 
@@ -92,7 +92,7 @@ npm audit --audit-level=moderate
 npm test
 npm run build
 cargo clippy --workspace --all-targets -- -D warnings
-cargo check -p sharegate
+cargo check -p veilsend
 cargo audit
 ```
 
@@ -107,9 +107,9 @@ npm run tauri build -- --no-bundle
 - No analytics, crash uploads, accounts, remote fonts, or cloud APIs.
 - Source content and raw findings are not written to application logs.
 - Source files are opened read-only by the interface and never overwritten.
-- Clipboard access occurs only after **Paste screenshot** or a qualifying `Ctrl+V`; ShareGate does not poll, monitor, clear, or write clipboard history.
+- Clipboard access occurs only after **Paste screenshot** or a qualifying `Ctrl+V`; VeilSend does not poll, monitor, clear, or write clipboard history.
 - Pasted source bytes remain in one desktop-owned in-memory session and are dropped when replaced, cleared, or the app exits. No temporary source image is created.
-- Saving is explicit and defaults to a `.cleaned` or `.redacted` filename. ShareGate rejects a PDF destination equal to the source path.
+- Saving is explicit and defaults to a `.cleaned` or `.redacted` filename. PDF output is verified in a same-folder temporary file and published without replacing the source or any existing destination.
 - Text input is limited to 10 MiB; image input to 25 MiB; PDF input to 50 MiB and 50 pages. PDF rendering is limited to 40 million pixels per page and 120 million per document; output is limited to 300 MiB.
 - Metadata-only image cleaning preserves the encoded pixel stream and ICC colour profiles; verification compares a SHA-256 fingerprint of the encoded pixel data before and after cleaning.
 - Visual redaction rewrites selected pixels and always exports PNG. It strips container metadata and reruns Windows OCR, face, deterministic text, QR, and barcode checks on the saved file.
@@ -128,17 +128,17 @@ The browser preview itself is delivered by a local Vite server during developmen
 
 ## Documentation
 
-- [Product and engineering design](docs/superpowers/specs/2026-08-12-sharegate-v0.1-design.md)
-- [Image metadata design](docs/superpowers/specs/2026-08-12-sharegate-image-metadata-design.md)
-- [Local OCR and visual redaction design](docs/superpowers/specs/2026-08-12-sharegate-ocr-redaction-design.md)
-- [Local QR redaction design](docs/superpowers/specs/2026-08-12-sharegate-qr-redaction-design.md)
-- [Face, barcode, and screenshot safety design](docs/superpowers/specs/2026-08-19-sharegate-visual-safety-expansion-design.md)
-- [Flattened PDF safety design](docs/superpowers/specs/2026-08-23-sharegate-pdf-redaction-design.md)
-- [Milestone A implementation plan](docs/superpowers/plans/2026-08-12-sharegate-milestone-a.md)
-- [OCR and visual redaction implementation plan](docs/superpowers/plans/2026-08-12-sharegate-ocr-redaction.md)
-- [QR redaction implementation plan](docs/superpowers/plans/2026-08-12-sharegate-qr-redaction.md)
-- [Face, barcode, and screenshot implementation plan](docs/superpowers/plans/2026-08-19-sharegate-visual-safety-expansion.md)
-- [Flattened PDF implementation plan](docs/superpowers/plans/2026-08-23-sharegate-pdf-redaction.md)
+- [Product and engineering design](docs/superpowers/specs/2026-08-12-veilsend-v0.1-design.md)
+- [Image metadata design](docs/superpowers/specs/2026-08-12-veilsend-image-metadata-design.md)
+- [Local OCR and visual redaction design](docs/superpowers/specs/2026-08-12-veilsend-ocr-redaction-design.md)
+- [Local QR redaction design](docs/superpowers/specs/2026-08-12-veilsend-qr-redaction-design.md)
+- [Face, barcode, and screenshot safety design](docs/superpowers/specs/2026-08-19-veilsend-visual-safety-expansion-design.md)
+- [Flattened PDF safety design](docs/superpowers/specs/2026-08-23-veilsend-pdf-redaction-design.md)
+- [Milestone A implementation plan](docs/superpowers/plans/2026-08-12-veilsend-milestone-a.md)
+- [OCR and visual redaction implementation plan](docs/superpowers/plans/2026-08-12-veilsend-ocr-redaction.md)
+- [QR redaction implementation plan](docs/superpowers/plans/2026-08-12-veilsend-qr-redaction.md)
+- [Face, barcode, and screenshot implementation plan](docs/superpowers/plans/2026-08-19-veilsend-visual-safety-expansion.md)
+- [Flattened PDF implementation plan](docs/superpowers/plans/2026-08-23-veilsend-pdf-redaction.md)
 - [Security policy and threat model](SECURITY.md)
 - [Development and verification notes](docs/development.md)
 

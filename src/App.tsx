@@ -66,14 +66,14 @@ function cleanedFilename(filename: string): string {
   const dot = filename.lastIndexOf(".");
   return dot > 0
     ? `${filename.slice(0, dot)}.cleaned${filename.slice(dot)}`
-    : `${filename || "sharegate-output"}.cleaned.txt`;
+    : `${filename || "veilsend-output"}.cleaned.txt`;
 }
 
 function readableError(error: unknown): string {
   if (typeof error === "string") return error;
   if (error instanceof Error) return error.message;
   if (error && typeof error === "object" && "message" in error) return String(error.message);
-  return "ShareGate could not complete that action. Your original content was not changed.";
+  return "VeilSend could not complete that action. Your original content was not changed.";
 }
 
 function formatBytes(bytes: number): string {
@@ -90,7 +90,7 @@ function StepRail({ stage }: { stage: Stage }) {
   const current = stage === "add" ? 0 : stage === "review" ? 1 : 3;
   const steps = ["Add", "Review", "Clean", "Verified"];
   return (
-    <nav className="step-rail" aria-label="ShareGate progress">
+    <nav className="step-rail" aria-label="VeilSend progress">
       {steps.map((step, index) => {
         const done = current > index;
         const active = current === index || (stage === "result" && index === 3);
@@ -225,7 +225,7 @@ function App() {
       return;
     }
     if (file.size > MAX_BYTES) {
-      setError("This file is larger than ShareGate's 10 MB local safety limit.");
+      setError("This file is larger than VeilSend's 10 MB local safety limit.");
       return;
     }
     try {
@@ -324,9 +324,9 @@ function App() {
     <div className="app-shell">
       <div className="paper-grain" aria-hidden="true" />
       <header className="app-header">
-        <button className="brand" type="button" onClick={reset} aria-label="Start a new ShareGate scan">
+        <button className="brand" type="button" onClick={reset} aria-label="Start a new VeilSend scan">
           <span className="brand-mark"><ShieldCheck size={22} strokeWidth={2.3} /></span>
-          <span><strong>ShareGate</strong><small>Outbound safety, on-device</small></span>
+          <span><strong>VeilSend</strong><small>Outbound safety, on-device</small></span>
         </button>
         <div className="header-actions">
           <span className="runtime-badge"><span />{isDesktop() ? "Desktop engine" : "Browser preview"}</span>
@@ -358,7 +358,7 @@ function App() {
               <InputModeTabs active="text" onChange={switchMode} />
               <div className="eyebrow"><ScanLine size={15} /> Local preflight check</div>
               <h1>Catch what should not<br />leave your computer.</h1>
-              <p className="lead">Paste a support log or add a text file. ShareGate flags credentials, personal data, private networks, and local paths before you send it.</p>
+              <p className="lead">Paste a support log or add a text file. VeilSend flags credentials, personal data, private networks, and local paths before you send it.</p>
 
               <div
                 className={`input-card ${dropActive ? "drop-active" : ""}`}
@@ -382,7 +382,7 @@ function App() {
                   className="source-input"
                   value={text}
                   onChange={(event) => { setText(event.target.value); setFilename("pasted-text.txt"); }}
-                  placeholder={`Paste terminal output, a debug log, JSON, or .env content…\n\nShareGate will not send it anywhere.`}
+                  placeholder={`Paste terminal output, a debug log, JSON, or .env content…\n\nVeilSend will not send it anywhere.`}
                   spellCheck={false}
                   aria-label="Content to scan"
                 />
@@ -437,7 +437,7 @@ function App() {
                 <div>
                   <div className="eyebrow"><FileSearch size={15} /> Review before cleaning</div>
                   <h1>{report.findings.length ? `${report.findings.length} thing${report.findings.length === 1 ? "" : "s"} may be unsafe to share.` : "No base-rule matches found."}</h1>
-                  <p>{report.findings.length ? "Every match is selected for cleanup. Inspect the context, keep intentional exceptions, then make a separate clean copy." : "You can still create and verify a separate copy. ShareGate only checks its enabled rules."}</p>
+                  <p>{report.findings.length ? "Every match is selected for cleanup. Inspect the context, keep intentional exceptions, then make a separate clean copy." : "You can still create and verify a separate copy. VeilSend only checks its enabled rules."}</p>
                 </div>
                 <div className="scan-receipt">
                   <span>SCAN RECEIPT</span>
@@ -491,7 +491,7 @@ function App() {
                     {busy ? <LoaderCircle className="spin" size={18} /> : <ShieldCheck size={18} />}
                     Clean & verify
                   </button>
-                  <p className="summary-disclaimer">“Verified” means no enabled ShareGate rule matched the output. Always use your judgment.</p>
+                  <p className="summary-disclaimer">“Verified” means no enabled VeilSend rule matched the output. Always use your judgment.</p>
                 </aside>
               </div>
             </section>
@@ -509,7 +509,7 @@ function App() {
                   <p>{result.verification.message}</p>
                 </div>
                 <div className="verification-ticket">
-                  <span>SHAREGATE CHECK</span>
+                  <span>VEILSEND CHECK</span>
                   <strong>{result.verification.status === "verified" ? "PASSED" : "REVIEW"}</strong>
                   <small>{result.verification.remainingFindings.length} remaining matches</small>
                 </div>
@@ -535,7 +535,7 @@ function App() {
 
               <div className="result-footer">
                 <button className="text-button" type="button" onClick={reset}><RefreshCcw size={15} /> Scan something else</button>
-                <p><AlertTriangle size={14} /> ShareGate reduces accidental exposure; it cannot guarantee that content is safe.</p>
+                <p><AlertTriangle size={14} /> VeilSend reduces accidental exposure; it cannot guarantee that content is safe.</p>
               </div>
             </section>
           )}
@@ -561,7 +561,7 @@ function App() {
       </div>
 
       <footer className="app-footer">
-        <span>ShareGate v0.1 · Milestone D</span>
+        <span>VeilSend v0.1 · Milestone D</span>
         <span><span className="offline-dot" /> Designed to work offline</span>
       </footer>
     </div>

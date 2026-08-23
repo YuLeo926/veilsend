@@ -1,13 +1,13 @@
-# ShareGate local OCR and visual redaction design
+# VeilSend local OCR and visual redaction design
 
 ## Objective
 
-Extend the image workflow from hidden-metadata cleaning to sensitive text that is visibly rendered in image pixels. ShareGate detects supported text locally, lets the user review every proposed redaction, writes irreversible pixel blocks to a separate PNG, and verifies the saved output with a second OCR and metadata pass.
+Extend the image workflow from hidden-metadata cleaning to sensitive text that is visibly rendered in image pixels. VeilSend detects supported text locally, lets the user review every proposed redaction, writes irreversible pixel blocks to a separate PNG, and verifies the saved output with a second OCR and metadata pass.
 
 ## User flow
 
 1. Choose one JPEG or PNG through the existing native picker.
-2. ShareGate inspects hidden metadata and runs Windows' installed OCR engine locally.
+2. VeilSend inspects hidden metadata and runs Windows' installed OCR engine locally.
 3. Review masked sensitive findings and their highlighted image regions.
 4. Keep or exclude each proposed visual redaction. Metadata removal remains mandatory.
 5. Choose **Redact, save & verify** and save a separate PNG copy.
@@ -17,7 +17,7 @@ Extend the image workflow from hidden-metadata cleaning to sensitive text that i
 
 - OCR is performed with `Windows.Media.Ocr` and the languages installed for the current Windows user. No image or recognized text is sent to a service.
 - The OCR adapter returns words, text ranges, language, and pixel rectangles to the desktop host. The frontend only receives masked rule findings and rectangles; it does not receive a full recognized-text transcript.
-- Existing deterministic ShareGate text rules are reused for credentials, email addresses, phone numbers, private network addresses, local paths, and optional custom terms.
+- Existing deterministic VeilSend text rules are reused for credentials, email addresses, phone numbers, private network addresses, local paths, and optional custom terms.
 - A rule match is mapped to every OCR word whose text range overlaps it. Adjacent rectangles are kept so a multi-word secret is fully covered.
 - Windows OCR does not expose a confidence score. The UI must explicitly show **Confidence score unavailable from Windows OCR** and must not synthesize a numeric score.
 - OCR absence, unsupported dimensions, a non-zero detected text angle, or an OCR failure is a review condition, never a verified-clean condition.
@@ -39,7 +39,7 @@ Extend the image workflow from hidden-metadata cleaning to sensitive text that i
 
 ## Boundaries
 
-- The first slice supports Windows 10 and later, JPEG/PNG input up to 25 MiB, installed Windows OCR languages, and ShareGate's existing deterministic text rules.
+- The first slice supports Windows 10 and later, JPEG/PNG input up to 25 MiB, installed Windows OCR languages, and VeilSend's existing deterministic text rules.
 - It does not detect faces, signatures by shape, handwritten text beyond what Windows OCR recognizes, arbitrary visual identifiers, barcodes, or QR codes.
 - QR detection is a separate follow-up slice because it has different decoding, review, and verification semantics.
 - A clean OCR pass is evidence for the supported detector, not proof that an image contains no sensitive visual information. The receipt and interface must preserve that distinction.

@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
-use sharegate_core::{
+use veilsend_core::{
     BarcodeAvailability, ImageBarcodeInspection, ImageFaceInspection, ImageOcrInspection,
     ImageQrInspection, ImageRect, ImageRedactionDecision, OcrAvailability, QrAvailability,
     ScanOptions, VerificationStatus, inspect_barcodes, inspect_qr_codes, map_ocr_findings,
@@ -58,7 +58,7 @@ impl VisualInspectionBundle {
     pub fn checks(&self) -> DetectorChecks {
         DetectorChecks {
             text: self.ocr.availability == OcrAvailability::Available && self.ocr.report.is_some(),
-            face: self.faces.availability == sharegate_core::FaceAvailability::Available,
+            face: self.faces.availability == veilsend_core::FaceAvailability::Available,
             qr: self.qr.availability == QrAvailability::Available && self.qr.report.is_some(),
             barcode: self.barcodes.availability == BarcodeAvailability::Available
                 && self.barcodes.report.is_some(),
@@ -283,7 +283,7 @@ fn inspect_visible_text(bytes: &[u8]) -> ImageOcrInspection {
 }
 
 fn inspect_qr(bytes: &[u8]) -> ImageQrInspection {
-    match inspect_qr_codes(bytes, sharegate_core::DEFAULT_MAX_IMAGE_BYTES) {
+    match inspect_qr_codes(bytes, veilsend_core::DEFAULT_MAX_IMAGE_BYTES) {
         Ok(report) => {
             let complete = report.warnings.is_empty()
                 && report.findings.len() == report.grids_detected;
@@ -320,7 +320,7 @@ fn inspect_qr(bytes: &[u8]) -> ImageQrInspection {
 }
 
 fn inspect_barcode(bytes: &[u8]) -> ImageBarcodeInspection {
-    match inspect_barcodes(bytes, sharegate_core::DEFAULT_MAX_IMAGE_BYTES) {
+    match inspect_barcodes(bytes, veilsend_core::DEFAULT_MAX_IMAGE_BYTES) {
         Ok(report) => {
             let complete = report.warnings.is_empty();
             let availability = if complete {

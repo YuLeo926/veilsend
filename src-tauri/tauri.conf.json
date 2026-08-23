@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "ShareGate",
+  "productName": "VeilSend",
   "version": "0.1.0",
-  "identifier": "app.sharegate.desktop",
+  "identifier": "app.veilsend.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "ShareGate",
+        "title": "VeilSend",
         "width": 1220,
         "height": 820,
         "minWidth": 900,

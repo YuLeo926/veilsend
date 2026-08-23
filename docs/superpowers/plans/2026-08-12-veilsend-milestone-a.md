@@ -1,13 +1,13 @@
-# ShareGate Milestone A Implementation Plan
+# VeilSend Milestone A Implementation Plan
 
 ## Goal
 
-Deliver a locally runnable ShareGate desktop foundation that scans pasted text or UTF-8 text files, lets users review and choose findings, creates a separate sanitized value, and verifies the result.
+Deliver a locally runnable VeilSend desktop foundation that scans pasted text or UTF-8 text files, lets users review and choose findings, creates a separate sanitized value, and verifies the result.
 
 ## Implementation slices
 
 1. **Repository foundation**
-   - Create the Cargo workspace, standalone `sharegate-core` crate, Vite/React frontend, and Tauri 2 host.
+   - Create the Cargo workspace, standalone `veilsend-core` crate, Vite/React frontend, and Tauri 2 host.
    - Add formatting, linting, build, and test scripts.
 
 2. **Domain model and scanner**
@@ -40,7 +40,7 @@ Deliver a locally runnable ShareGate desktop foundation that scans pasted text o
 ```text
 Cargo.toml
 package.json
-crates/sharegate-core/src/{lib,model,rules,sanitize}.rs
+crates/veilsend-core/src/{lib,model,rules,sanitize}.rs
 src/{App,main,styles}.tsx
 src/lib/{bridge,browserScanner,types}.ts
 src-tauri/src/{lib,main}.rs

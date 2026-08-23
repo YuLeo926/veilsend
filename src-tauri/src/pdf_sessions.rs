@@ -6,11 +6,11 @@ use std::{
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde::Serialize;
-use sharegate_core::{
+use uuid::Uuid;
+use veilsend_core::{
     DEFAULT_MAX_PDF_SOURCE_BYTES, DEFAULT_PDF_RENDER_DPI, ImageBarcodeInspection,
     ImageFaceInspection, ImageOcrInspection, ImageQrInspection, fingerprint,
 };
-use uuid::Uuid;
 
 use crate::{
     image_pipeline::{ReviewedVisualSnapshot, VisualInspectionBundle, inspect_visual},
@@ -181,7 +181,7 @@ pub fn prepare_pdf_file(path: &Path) -> Result<PreparedPdfSession, String> {
     })
     .map_err(PdfAdapterError::into_message)?;
     if descriptors.len() != pages.len() || pages.is_empty() {
-        return Err("ShareGate could not inspect every PDF page.".to_owned());
+        return Err("VeilSend could not inspect every PDF page.".to_owned());
     }
     Ok(PreparedPdfSession {
         canonical_path,
@@ -263,7 +263,7 @@ fn read_source_file(path: &Path) -> Result<Vec<u8>, String> {
         .map_err(|_| "The selected PDF could not be read. Choose it again.".to_owned())?;
     if bytes.len() > DEFAULT_MAX_PDF_SOURCE_BYTES {
         return Err(format!(
-            "This PDF is larger than ShareGate's {} MB local safety limit.",
+            "This PDF is larger than VeilSend's {} MB local safety limit.",
             DEFAULT_MAX_PDF_SOURCE_BYTES / 1024 / 1024
         ));
     }
@@ -338,7 +338,7 @@ mod tests {
     impl TempPdf {
         fn new(label: &str, bytes: &[u8]) -> Self {
             let path =
-                std::env::temp_dir().join(format!("sharegate-{label}-{}.pdf", Uuid::new_v4()));
+                std::env::temp_dir().join(format!("veilsend-{label}-{}.pdf", Uuid::new_v4()));
             std::fs::write(&path, bytes).unwrap();
             Self(path.canonicalize().unwrap())
         }
@@ -375,15 +375,15 @@ mod tests {
     #[cfg(target_os = "windows")]
     #[test]
     fn prepares_a_synthetic_pdf_without_source_page_files() {
-        let source = sharegate_core::build_flattened_pdf(
-            &[sharegate_core::PdfPageRaster {
+        let source = veilsend_core::build_flattened_pdf(
+            &[veilsend_core::PdfPageRaster {
                 width_pixels: 20,
                 height_pixels: 30,
                 width_points: 72.0,
                 height_points: 108.0,
                 rgb_bytes: vec![240; 20 * 30 * 3],
             }],
-            sharegate_core::PdfBuildLimits::default(),
+            veilsend_core::PdfBuildLimits::default(),
         )
         .unwrap();
         let file = TempPdf::new("prepared", &source);
@@ -405,7 +405,7 @@ mod tests {
         PreparedPdfSession {
             canonical_path: file.0.clone(),
             source_bytes: bytes.clone(),
-            fingerprint: sharegate_core::fingerprint(&bytes),
+            fingerprint: veilsend_core::fingerprint(&bytes),
             filename: file.0.file_name().unwrap().to_string_lossy().into_owned(),
             pages: Vec::new(),
         }

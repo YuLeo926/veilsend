@@ -1,8 +1,8 @@
-# ShareGate QR Redaction Design
+# VeilSend QR Redaction Design
 
 ## Status
 
-Approved for implementation on 2026-08-12. QR detection was already part of the approved ShareGate image milestone, and the user explicitly asked the project to continue autonomously with this as the next slice.
+Approved for implementation on 2026-08-12. QR detection was already part of the approved VeilSend image milestone, and the user explicitly asked the project to continue autonomously with this as the next slice.
 
 ## Goal
 
@@ -24,7 +24,7 @@ It does not add one-dimensional barcodes, Data Matrix, Aztec, PDF417, camera cap
 
 ## Chosen approach
 
-Use the pure-Rust `quircs` detector in `sharegate-core`. Its extracted-code API returns four image-space corners separately from payload decoding, which is important for fail-visible behavior: a located code that cannot be decoded is still a reviewable, redactable finding.
+Use the pure-Rust `quircs` detector in `veilsend-core`. Its extracted-code API returns four image-space corners separately from payload decoding, which is important for fail-visible behavior: a located code that cannot be decoded is still a reviewable, redactable finding.
 
 Alternatives considered:
 
@@ -60,7 +60,7 @@ Successful payloads are classified in this order:
 5. all other decoded payloads are encoded content and medium severity.
 6. located grids that fail decoding are undecodable QR-like codes and high severity.
 
-Classification is deliberately coarse. ShareGate does not open URLs, parse credentials into individual fields, or execute URI handlers.
+Classification is deliberately coarse. VeilSend does not open URLs, parse credentials into individual fields, or execute URI handlers.
 
 The four grid corners are clamped to the decoded image bounds and converted to one enclosing rectangle. A safety margin proportional to the shorter side, with a fixed minimum, is included before redaction. The existing redactor applies its own small final padding and clips the region to the image.
 
@@ -78,7 +78,7 @@ Before writing output, the desktop adapter rereads and fingerprints the source. 
 
 Selected OCR word rectangles and selected QR rectangles are converted into generic redaction targets. The core fills their pixels with the existing opaque ink, normalizes display orientation when necessary, and writes a metadata-free PNG. Overlapping rectangles are safe and may be painted more than once. The source file is never overwritten.
 
-If no OCR or QR region is found, the existing lossless metadata-only path remains in use. When visual findings exist but the user keeps all of them, ShareGate still writes a normalized metadata-free PNG so the saved-file visual verification runs against the same export path used for other reviewed images.
+If no OCR or QR region is found, the existing lossless metadata-only path remains in use. When visual findings exist but the user keeps all of them, VeilSend still writes a normalized metadata-free PNG so the saved-file visual verification runs against the same export path used for other reviewed images.
 
 ## Verification semantics
 

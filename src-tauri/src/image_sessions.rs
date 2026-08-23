@@ -5,8 +5,8 @@ use std::{
 };
 
 use serde::Serialize;
-use sharegate_core::{DEFAULT_MAX_IMAGE_BYTES, fingerprint};
 use uuid::Uuid;
+use veilsend_core::{DEFAULT_MAX_IMAGE_BYTES, fingerprint};
 
 use crate::image_pipeline::ReviewedVisualSnapshot;
 
@@ -78,7 +78,7 @@ impl ImageSessionStore {
         }
         if encoded_bytes.len() > DEFAULT_MAX_IMAGE_BYTES {
             return Err(format!(
-                "The pasted screenshot is larger than ShareGate's {} MB local safety limit.",
+                "The pasted screenshot is larger than VeilSend's {} MB local safety limit.",
                 DEFAULT_MAX_IMAGE_BYTES / 1024 / 1024
             ));
         }
@@ -186,7 +186,7 @@ fn read_source_file(path: &Path) -> Result<Vec<u8>, String> {
         .map_err(|_| "The selected image could not be read. Choose it again.".to_owned())?;
     if bytes.len() > DEFAULT_MAX_IMAGE_BYTES {
         return Err(format!(
-            "This image is larger than ShareGate's {} MB local safety limit.",
+            "This image is larger than VeilSend's {} MB local safety limit.",
             DEFAULT_MAX_IMAGE_BYTES / 1024 / 1024
         ));
     }

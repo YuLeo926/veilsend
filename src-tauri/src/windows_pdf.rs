@@ -1,4 +1,5 @@
-use sharegate_core::{
+use std::path::Path;
+use veilsend_core::{
     DEFAULT_MAX_IMAGE_BYTES, DEFAULT_MAX_PDF_PAGE_PIXELS, DEFAULT_MAX_PDF_PAGES,
     DEFAULT_MAX_PDF_TOTAL_PIXELS,
 };
@@ -48,6 +49,21 @@ pub fn visit_pages(
 }
 
 #[cfg(target_os = "windows")]
+pub fn visit_file_pages(
+    path: &Path,
+    dpi: u32,
+    mut visitor: impl FnMut(RenderedPdfPage) -> Result<(), PdfAdapterError>,
+) -> Result<Vec<PdfPageDescriptor>, PdfAdapterError> {
+    let _apartment = initialize_apartment()?;
+    let document = load_document_file(path)?;
+    let descriptors = describe_pages(&document, dpi)?;
+    for descriptor in &descriptors {
+        visitor(render(&document, *descriptor)?)?;
+    }
+    Ok(descriptors)
+}
+
+#[cfg(target_os = "windows")]
 pub fn render_page(
     input: &[u8],
     page_index: usize,
@@ -65,6 +81,17 @@ pub fn render_page(
 #[cfg(not(target_os = "windows"))]
 pub fn visit_pages(
     _input: &[u8],
+    _dpi: u32,
+    _visitor: impl FnMut(RenderedPdfPage) -> Result<(), PdfAdapterError>,
+) -> Result<Vec<PdfPageDescriptor>, PdfAdapterError> {
+    Err(PdfAdapterError::Unavailable(
+        "Local PDF page rendering is currently available on Windows.".to_owned(),
+    ))
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn visit_file_pages(
+    _path: &Path,
     _dpi: u32,
     _visitor: impl FnMut(RenderedPdfPage) -> Result<(), PdfAdapterError>,
 ) -> Result<Vec<PdfPageDescriptor>, PdfAdapterError> {
@@ -153,7 +180,7 @@ fn load_document(
     let document = operation.join().map_err(|error| {
         if error.code() == ERROR_WRONG_PASSWORD {
             PdfAdapterError::Invalid(
-                "Password-protected PDFs are not supported. ShareGate did not read or store a password."
+                "Password-protected PDFs are not supported. VeilSend did not read or store a password."
                     .to_owned(),
             )
         } else {
@@ -162,11 +189,52 @@ fn load_document(
     })?;
     if document.IsPasswordProtected().map_err(|_| invalid())? {
         return Err(PdfAdapterError::Invalid(
-            "Password-protected PDFs are not supported. ShareGate did not read or store a password."
+            "Password-protected PDFs are not supported. VeilSend did not read or store a password."
                 .to_owned(),
         ));
     }
     Ok((stream, document))
+}
+
+#[cfg(target_os = "windows")]
+fn load_document_file(path: &Path) -> Result<windows::Data::Pdf::PdfDocument, PdfAdapterError> {
+    use windows::{
+        Data::Pdf::PdfDocument,
+        Storage::StorageFile,
+        core::{HRESULT, HSTRING},
+    };
+
+    const ERROR_WRONG_PASSWORD: HRESULT = HRESULT(0x8007052B_u32 as i32);
+    let invalid = || {
+        PdfAdapterError::Invalid(
+            "The saved PDF could not be reopened safely for verification.".to_owned(),
+        )
+    };
+    let path = HSTRING::from(path.to_string_lossy().as_ref());
+    let file = StorageFile::GetFileFromPathAsync(&path)
+        .map_err(|_| invalid())?
+        .join()
+        .map_err(|_| invalid())?;
+    let document = PdfDocument::LoadFromFileAsync(&file)
+        .map_err(|_| invalid())?
+        .join()
+        .map_err(|error| {
+            if error.code() == ERROR_WRONG_PASSWORD {
+                PdfAdapterError::Invalid(
+                    "Password-protected PDFs are not supported. VeilSend did not read or store a password."
+                        .to_owned(),
+                )
+            } else {
+                invalid()
+            }
+        })?;
+    if document.IsPasswordProtected().map_err(|_| invalid())? {
+        return Err(PdfAdapterError::Invalid(
+            "Password-protected PDFs are not supported. VeilSend did not read or store a password."
+                .to_owned(),
+        ));
+    }
+    Ok(document)
 }
 
 #[cfg(target_os = "windows")]
@@ -190,7 +258,7 @@ fn describe_pages(
     }
     if page_count > DEFAULT_MAX_PDF_PAGES {
         return Err(PdfAdapterError::Invalid(format!(
-            "The selected PDF has more than ShareGate's {DEFAULT_MAX_PDF_PAGES}-page local limit."
+            "The selected PDF has more than VeilSend's {DEFAULT_MAX_PDF_PAGES}-page local limit."
         )));
     }
 
@@ -218,14 +286,14 @@ fn describe_pages(
             .ok_or_else(invalid)?;
         if pixels > DEFAULT_MAX_PDF_PAGE_PIXELS {
             return Err(PdfAdapterError::Invalid(format!(
-                "PDF page {} exceeds ShareGate's 40-million-pixel render limit.",
+                "PDF page {} exceeds VeilSend's 40-million-pixel render limit.",
                 page_index + 1
             )));
         }
         total_pixels = total_pixels.checked_add(pixels).ok_or_else(invalid)?;
         if total_pixels > DEFAULT_MAX_PDF_TOTAL_PIXELS {
             return Err(PdfAdapterError::Invalid(
-                "The PDF exceeds ShareGate's aggregate rendered-pixel limit.".to_owned(),
+                "The PDF exceeds VeilSend's aggregate rendered-pixel limit.".to_owned(),
             ));
         }
         descriptors.push(PdfPageDescriptor {
@@ -304,7 +372,7 @@ fn render(
         .map_err(|_| render_invalid(descriptor, "output sizing"))?;
     if size == 0 || size > DEFAULT_MAX_IMAGE_BYTES as u64 {
         return Err(PdfAdapterError::Invalid(format!(
-            "PDF page {} expands beyond ShareGate's 25 MB rendered-page limit.",
+            "PDF page {} expands beyond VeilSend's 25 MB rendered-page limit.",
             descriptor.page_index + 1
         )));
     }
@@ -347,7 +415,7 @@ fn render(
     }
     if png_bytes.len() > DEFAULT_MAX_IMAGE_BYTES {
         return Err(PdfAdapterError::Invalid(format!(
-            "PDF page {} expands beyond ShareGate's 25 MB normalized-page limit.",
+            "PDF page {} expands beyond VeilSend's 25 MB normalized-page limit.",
             descriptor.page_index + 1
         )));
     }
@@ -368,7 +436,7 @@ fn render_invalid(descriptor: PdfPageDescriptor, stage: &str) -> PdfAdapterError
 #[cfg(all(test, target_os = "windows"))]
 mod tests {
     use super::*;
-    use sharegate_core::{PdfBuildLimits, PdfPageRaster, build_flattened_pdf};
+    use veilsend_core::{PdfBuildLimits, PdfPageRaster, build_flattened_pdf};
 
     #[test]
     fn renders_a_synthetic_image_only_pdf_from_memory() {
@@ -395,5 +463,34 @@ mod tests {
         assert_eq!(descriptors[0].height_pixels, 216);
         assert_eq!(rendered.len(), 1);
         assert!(rendered[0].png_bytes.starts_with(b"\x89PNG\r\n\x1a\n"));
+    }
+
+    #[test]
+    fn renders_a_synthetic_image_only_pdf_from_a_saved_file() {
+        let source = build_flattened_pdf(
+            &[PdfPageRaster {
+                width_pixels: 20,
+                height_pixels: 30,
+                width_points: 72.0,
+                height_points: 108.0,
+                rgb_bytes: vec![240; 20 * 30 * 3],
+            }],
+            PdfBuildLimits::default(),
+        )
+        .unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("saved.pdf");
+        std::fs::write(&path, source).unwrap();
+        let mut rendered = Vec::new();
+        let descriptors = visit_file_pages(&path, 144, |page| {
+            rendered.push(page);
+            Ok(())
+        })
+        .unwrap();
+
+        assert_eq!(descriptors.len(), 1);
+        assert_eq!(descriptors[0].width_pixels, 144);
+        assert_eq!(descriptors[0].height_pixels, 216);
+        assert_eq!(rendered.len(), 1);
     }
 }

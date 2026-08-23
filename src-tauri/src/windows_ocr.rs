@@ -1,4 +1,4 @@
-use sharegate_core::{ImageRect, OcrWord};
+use veilsend_core::{ImageRect, OcrWord};
 
 #[derive(Debug)]
 pub struct RecognizedImage {
@@ -126,10 +126,10 @@ mod tests {
     fn recognizes_the_synthetic_acceptance_fixture() {
         let result = recognize(include_bytes!("../../fixtures/ocr-sensitive-sample.png"))
             .expect("Windows OCR should be available for the acceptance fixture");
-        let report = sharegate_core::map_ocr_findings(
+        let report = veilsend_core::map_ocr_findings(
             &result.words,
             result.language,
-            sharegate_core::ScanOptions::default(),
+            veilsend_core::ScanOptions::default(),
         )
         .unwrap();
         let rule_ids = report

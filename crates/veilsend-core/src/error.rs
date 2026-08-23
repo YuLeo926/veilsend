@@ -3,7 +3,7 @@ use thiserror::Error;
 
 #[derive(Debug, Error, Serialize)]
 #[serde(tag = "code", content = "message", rename_all = "SCREAMING_SNAKE_CASE")]
-pub enum ShareGateError {
+pub enum VeilSendError {
     #[error("The content is larger than the {0} byte local safety limit.")]
     ContentTooLarge(usize),
     #[error("The source changed after it was scanned. Scan it again before cleaning.")]

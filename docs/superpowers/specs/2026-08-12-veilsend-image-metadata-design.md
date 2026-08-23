@@ -1,4 +1,4 @@
-# ShareGate image metadata design
+# VeilSend image metadata design
 
 ## Objective
 
@@ -19,7 +19,7 @@ Add a first image-safety slice that removes hidden privacy metadata from JPEG an
 - The source path is opened read-only and is never an allowed output path.
 - Cleaning removes supported EXIF, XMP, IPTC/Photoshop, JPEG comments, PNG text, and PNG modification-time data.
 - ICC colour profiles and encoded pixel chunks remain intact.
-- ShareGate fingerprints the encoded pixel stream before and after cleaning and rereads the saved file before reporting success.
+- VeilSend fingerprints the encoded pixel stream before and after cleaning and rereads the saved file before reporting success.
 - Images with a non-normal EXIF orientation are refused because dropping that tag can rotate or mirror the displayed image.
 - Images with unparseable EXIF are also refused because their orientation cannot be proven safe.
 

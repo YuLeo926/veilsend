@@ -1,28 +1,28 @@
 use image::GenericImageView;
 
-use crate::{ImageRect, QrFinding, QrKind, QrScanReport, Severity, ShareGateError, inspect_image};
+use crate::{ImageRect, QrFinding, QrKind, QrScanReport, Severity, VeilSendError, inspect_image};
 
 const MAX_DECODED_PIXELS: u64 = 40_000_000;
 const QR_MIN_MARGIN: u32 = 8;
 
-pub fn inspect_qr_codes(input: &[u8], max_bytes: usize) -> Result<QrScanReport, ShareGateError> {
+pub fn inspect_qr_codes(input: &[u8], max_bytes: usize) -> Result<QrScanReport, VeilSendError> {
     let inspection = inspect_image(input, max_bytes)?;
     let width = inspection.width.ok_or_else(|| {
-        ShareGateError::InvalidImage("The image width could not be read.".to_owned())
+        VeilSendError::InvalidImage("The image width could not be read.".to_owned())
     })?;
     let height = inspection.height.ok_or_else(|| {
-        ShareGateError::InvalidImage("The image height could not be read.".to_owned())
+        VeilSendError::InvalidImage("The image height could not be read.".to_owned())
     })?;
     if u64::from(width) * u64::from(height) > MAX_DECODED_PIXELS {
-        return Err(ShareGateError::InvalidImage(format!(
-            "The image expands beyond ShareGate's {MAX_DECODED_PIXELS}-pixel QR inspection limit."
+        return Err(VeilSendError::InvalidImage(format!(
+            "The image expands beyond VeilSend's {MAX_DECODED_PIXELS}-pixel QR inspection limit."
         )));
     }
 
     let decoded = image::load_from_memory(input)
-        .map_err(|error| ShareGateError::InvalidImage(error.to_string()))?;
+        .map_err(|error| VeilSendError::InvalidImage(error.to_string()))?;
     if decoded.dimensions() != (width, height) {
-        return Err(ShareGateError::InvalidImage(
+        return Err(VeilSendError::InvalidImage(
             "The decoded image dimensions do not match its container.".to_owned(),
         ));
     }

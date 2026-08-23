@@ -47,14 +47,14 @@ export async function saveCleanedText(defaultName: string, content: string): Pro
 
 export async function pickImage(): Promise<ImageSession | null> {
   if (!isDesktop()) {
-    throw new Error("Image metadata cleaning is available in the ShareGate desktop app.");
+    throw new Error("Image metadata cleaning is available in the VeilSend desktop app.");
   }
   return invoke<ImageSession | null>("pick_image");
 }
 
 export async function pasteImage(): Promise<ImageSession> {
   if (!isDesktop()) {
-    throw new Error("Screenshot paste is available in the ShareGate desktop app.");
+    throw new Error("Screenshot paste is available in the VeilSend desktop app.");
   }
   return invoke<ImageSession>("paste_image");
 }
@@ -69,7 +69,7 @@ export async function cleanImageFile(
   decisions: ImageRedactionDecision[],
 ): Promise<CleanedImageFile | null> {
   if (!isDesktop()) {
-    throw new Error("Image metadata cleaning is available in the ShareGate desktop app.");
+    throw new Error("Image metadata cleaning is available in the VeilSend desktop app.");
   }
   return invoke<CleanedImageFile | null>("clean_image_file", {
     sessionId,
@@ -79,7 +79,7 @@ export async function cleanImageFile(
 
 export async function pickPdf(): Promise<PdfSession | null> {
   if (!isDesktop()) {
-    throw new Error("PDF safety copies are available in the ShareGate desktop app.");
+    throw new Error("PDF safety copies are available in the VeilSend desktop app.");
   }
   return invoke<PdfSession | null>("pick_pdf");
 }
@@ -89,7 +89,7 @@ export async function getPdfPagePreview(
   pageIndex: number,
 ): Promise<PdfPagePreview> {
   if (!isDesktop()) {
-    throw new Error("PDF page review is available in the ShareGate desktop app.");
+    throw new Error("PDF page review is available in the VeilSend desktop app.");
   }
   return invoke<PdfPagePreview>("get_pdf_page_preview", { sessionId, pageIndex });
 }
@@ -105,7 +105,7 @@ export async function cleanPdfFile(
   manualRegions: PdfManualRegion[],
 ): Promise<CleanedPdfFile | null> {
   if (!isDesktop()) {
-    throw new Error("PDF safety copies are available in the ShareGate desktop app.");
+    throw new Error("PDF safety copies are available in the VeilSend desktop app.");
   }
   return invoke<CleanedPdfFile | null>("clean_pdf_file", {
     sessionId,

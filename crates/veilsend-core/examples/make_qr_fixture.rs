@@ -4,7 +4,7 @@ use image::{DynamicImage, GrayImage, ImageFormat, Luma};
 use qrcode::{QrCode, types::Color};
 
 fn main() {
-    let payload = "https://example.com/internal/sign-in?token=FAKE-SHAREGATE-TOKEN";
+    let payload = "https://example.com/internal/sign-in?token=FAKE-VEILSEND-TOKEN";
     let code = QrCode::new(payload.as_bytes()).expect("synthetic QR payload should fit");
     let module_count = code.width() as u32;
     let quiet_zone = 4;

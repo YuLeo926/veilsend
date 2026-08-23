@@ -8,7 +8,7 @@ use pdf_writer::{
 };
 
 const ATTACHMENT: &[u8] =
-    b"SG_PDF_ATTACHMENT_MARKER\nSynthetic attachment for ShareGate PDF acceptance.\n";
+    b"SG_PDF_ATTACHMENT_MARKER\nSynthetic attachment for VeilSend PDF acceptance.\n";
 
 fn main() {
     let fixtures = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -85,15 +85,15 @@ fn build_fixture(page_one: &RgbImage, page_two: &RgbImage) -> Vec<u8> {
         .count(3);
     pdf.type1_font(FONT).base_font(Name(b"Helvetica"));
     pdf.document_info(INFO)
-        .title(TextStr("ShareGate synthetic PDF acceptance"))
+        .title(TextStr("VeilSend synthetic PDF acceptance"))
         .author(TextStr("SG_PDF_METADATA_MARKER"))
         .subject(TextStr("Reserved example data only"))
         .keywords(TextStr("synthetic, redaction, local"))
-        .producer(TextStr("ShareGate deterministic fixture generator"));
+        .producer(TextStr("VeilSend deterministic fixture generator"));
     let metadata = br#"<?xpacket begin=''?>
 <x:xmpmeta xmlns:x='adobe:ns:meta/'>
 <rdf:RDF xmlns:rdf='http://www.w3.org/1999/02/22-rdf-syntax-ns#'>
-<rdf:Description xmlns:sg='https://example.com/sharegate/' sg:marker='SG_PDF_METADATA_MARKER'/>
+<rdf:Description xmlns:sg='https://example.com/veilsend/' sg:marker='SG_PDF_METADATA_MARKER'/>
 </rdf:RDF></x:xmpmeta><?xpacket end='w'?>"#;
     pdf.metadata(METADATA, metadata);
 
@@ -128,7 +128,7 @@ fn build_fixture(page_one: &RgbImage, page_two: &RgbImage) -> Vec<u8> {
         .contents(TextStr("SG_PDF_ANNOTATION_MARKER"))
         .action()
         .action_type(ActionType::Uri)
-        .uri(Str(b"https://example.com/sharegate-fixture"));
+        .uri(Str(b"https://example.com/veilsend-fixture"));
     link.finish();
 
     let mut script = pdf.annotation(SCRIPT_ANNOTATION);
@@ -158,7 +158,7 @@ fn build_fixture(page_one: &RgbImage, page_two: &RgbImage) -> Vec<u8> {
     pdf.file_spec(FILE_SPEC)
         .path(Str(b"pdf-sensitive-attachment.txt"))
         .unic_file(TextStr("pdf-sensitive-attachment.txt"))
-        .description(TextStr("Synthetic ShareGate acceptance attachment"))
+        .description(TextStr("Synthetic VeilSend acceptance attachment"))
         .embedded_file_with_unicode(EMBEDDED_FILE);
 
     let output = pdf.finish();
