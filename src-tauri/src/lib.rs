@@ -14,15 +14,18 @@ use sharegate_core::{
 
 mod image_pipeline;
 mod image_sessions;
+mod pdf_sessions;
 mod windows_clipboard;
 mod windows_faces;
 mod windows_ocr;
+mod windows_pdf;
 
 use image_pipeline::{
     DetectorKind, ReviewedVisualFinding, ReviewedVisualSnapshot, classify_saved_output,
     inspect_visual, resolve_decisions,
 };
 use image_sessions::{ImageSessionStore, ImageSessionSummary, ImageSourceKind};
+use pdf_sessions::{PdfPagePreview, PdfSessionStore, PdfSessionSummary};
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -152,6 +155,41 @@ async fn paste_image(
     let (session, reviewed) = build_image_session(summary, &resolved.bytes)?;
     state.set_reviewed(&session.session_id, reviewed)?;
     Ok(session)
+}
+
+#[tauri::command]
+async fn pick_pdf(
+    state: tauri::State<'_, PdfSessionStore>,
+) -> Result<Option<PdfSessionSummary>, String> {
+    let prepared = tauri::async_runtime::spawn_blocking(move || {
+        let path = rfd::FileDialog::new()
+            .add_filter("PDF documents", &["pdf"])
+            .pick_file();
+        path.map(|path| pdf_sessions::prepare_pdf_file(&path))
+            .transpose()
+    })
+    .await
+    .map_err(|error| format!("The PDF picker could not be opened: {error}"))??;
+    prepared.map(|prepared| state.replace(prepared)).transpose()
+}
+
+#[tauri::command]
+async fn get_pdf_page_preview(
+    session_id: String,
+    page_index: usize,
+    state: tauri::State<'_, PdfSessionStore>,
+) -> Result<PdfPagePreview, String> {
+    let resolved = state.resolve(&session_id)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        pdf_sessions::prepare_page_preview(&resolved.source_bytes, page_index)
+    })
+    .await
+    .map_err(|error| format!("The PDF page preview could not be started: {error}"))?
+}
+
+#[tauri::command]
+fn clear_pdf_session(state: tauri::State<'_, PdfSessionStore>) -> Result<(), String> {
+    state.clear()
 }
 
 #[tauri::command]
@@ -500,6 +538,7 @@ fn format_core_error(error: ShareGateError) -> String {
 pub fn run() {
     tauri::Builder::default()
         .manage(ImageSessionStore::default())
+        .manage(PdfSessionStore::default())
         .invoke_handler(tauri::generate_handler![
             scan_text,
             sanitize_text,
@@ -507,7 +546,10 @@ pub fn run() {
             pick_image,
             paste_image,
             clear_image_session,
-            clean_image_file
+            clean_image_file,
+            pick_pdf,
+            get_pdf_page_preview,
+            clear_pdf_session
         ])
         .run(tauri::generate_context!())
         .expect("error while running ShareGate");
