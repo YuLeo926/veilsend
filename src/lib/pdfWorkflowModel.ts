@@ -2,6 +2,7 @@ import type {
   CleanedPdfFile,
   ImageRect,
   ImageRedactionDecision,
+  NormalizedRect,
   PdfPageSummary,
   PdfSession,
   Severity,
@@ -19,6 +20,41 @@ export type PdfVisualFinding = {
   severity: Severity;
   rectangles: ImageRect[];
 };
+
+export function normalizedRectangleFromPoints(
+  originX: number,
+  originY: number,
+  x: number,
+  y: number,
+): NormalizedRect {
+  return {
+    x: Math.min(originX, x),
+    y: Math.min(originY, y),
+    width: Math.abs(x - originX),
+    height: Math.abs(y - originY),
+  };
+}
+
+export function resizeNormalizedRectangle(
+  initial: NormalizedRect,
+  startX: number,
+  startY: number,
+  x: number,
+  y: number,
+  minimumSize = 0.003,
+): NormalizedRect {
+  return {
+    ...initial,
+    width: Math.min(
+      1 - initial.x,
+      Math.max(minimumSize, initial.width + x - startX),
+    ),
+    height: Math.min(
+      1 - initial.y,
+      Math.max(minimumSize, initial.height + y - startY),
+    ),
+  };
+}
 
 export function buildPdfPageFindings(page: PdfPageSummary): PdfVisualFinding[] {
   return [

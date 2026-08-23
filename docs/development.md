@@ -41,6 +41,18 @@ Screenshot intake reads a bitmap from the focused Windows clipboard only after *
 
 All five saved-image checks are independent: supported metadata, sensitive recognized text, faces, QR codes, and one-dimensional barcodes. A failed or unavailable component remains visible and changes the receipt to `Needs review`; successful components are not discarded. A user-selected **Keep** may become `Cleaned with exceptions` only when the saved finding unambiguously matches the reviewed finding of the same detector type.
 
+## Flattened PDF workflow
+
+PDF support is Windows-only and is a separate renderer-and-reconstruction trust boundary. `Windows.Data.Pdf` loads an unencrypted document from desktop-owned memory, reports physical page sizes, and renders sequentially at 144 DPI. The active session retains immutable source bytes, a canonical source path, a SHA-256 fingerprint, safe detector snapshots, 320-pixel thumbnails, and no full-resolution page cache. One selected-page preview is capped at 1,600 pixels.
+
+Input is limited to 50 MiB and 50 pages, with 40 million pixels per page and 120 million per document. A document may contain at most 100 manual regions per page and 1,000 total. Output is limited to 300 MiB. Password entry, encrypted output, Office files, batch processing, page reordering, and preservation of selectable text or interactive PDF features are not supported.
+
+Export rereads the source path and requires its fingerprint to match the reviewed session. It rerenders immutable source bytes, reruns all four visual detectors, scopes identities by page, geometrically rematches every automatic finding, requires an exact **Redact** or **Keep** decision set, validates normalized manual regions in Rust, and verifies selected pixels are opaque. Full-resolution RGB is Flate-compressed one page at a time before the final document is assembled.
+
+The writer creates a new PDF 1.7 catalog and page tree with exactly one lossless RGB image XObject and one short content stream per page. It writes no Info dictionary, XMP, original text, action, form, annotation, names tree, attachment, outline, signature, structure tree, or source object. The result intentionally loses text selection, search, tagged accessibility, forms, signatures, links, bookmarks, annotations, and attachments.
+
+After saving, ShareGate rereads the destination and requires its SHA-256 and bytes to equal the generated buffer. It then reloads the actual file through Windows PDF, compares page count and physical sizes, rerenders every page, verifies the opaque regions, and reruns text, face, QR, and barcode checks. Any incomplete detector or unexpected remaining finding yields `Needs review`; complete checks plus an explicit **Keep** yield `Cleaned with exceptions`.
+
 ## Synthetic data only
 
 Use `fixtures/synthetic-support-log.txt` or create obviously fake values under reserved example domains. Never use a real incident log or credential to test ShareGate.
@@ -83,4 +95,28 @@ cargo test -p sharegate windows_faces::tests::recognizes_the_synthetic_acceptanc
 
 The resulting `fixtures/visual-sensitive-sample.png` is the packaged clipboard acceptance fixture. Copy it to the Windows clipboard, open image mode, press `Ctrl+V`, confirm one face and three barcode findings without payload content, redact all, save a separate PNG, and require all five saved-file checks to complete with zero unexpected findings. Confirm the fixture hash is unchanged and that no temporary source image was created.
 
-PDF support is intentionally deferred to a separate bounded page-rendering and image-only reconstruction pipeline. Do not treat a PDF as an image container or reuse the current single-image session without a dedicated design review.
+`fixtures/pdf-sensitive-sample.pdf` is the deterministic three-page PDF acceptance fixture. Page 1 is portrait letter size (`612 × 792 pt`) and reuses the stable OCR acceptance raster for three reserved visible rule findings, plus an original visible text-layer marker. Page 2 is landscape letter size (`792 × 612 pt`) and contains one synthetic face, one synthetic QR code, and three synthetic one-dimensional barcodes. Page 3 is `720 × 540 pt` and contains a manual-only orange/black marker plus invisible text, document metadata, a link, a JavaScript action, a form field, an annotation, and `fixtures/pdf-sensitive-attachment.txt` as an embedded file.
+
+The expected Windows detector counts are three text findings on page 1, one face, one QR, and three barcodes on page 2, and zero automatic findings on page 3. The acceptance flow adds one manual cover to page 3, selects all eight automatic findings, rebuilds three image-only pages, and requires a `Verified` saved-file receipt with no unexpected remaining findings.
+
+Regenerate the source fixture deterministically:
+
+```bash
+cargo run -p sharegate-core --example make_qr_fixture
+cargo run -p sharegate-core --example make_barcode_fixture
+cargo run -p sharegate-core --example make_visual_fixture
+cargo run -p sharegate-core --example make_pdf_fixture
+```
+
+Expected SHA-256 values:
+
+- `fixtures/pdf-sensitive-sample.pdf`: `561ed5622b8bf9582efe037944359759501944ee02f6fba9e70315096f533752`
+- `fixtures/pdf-sensitive-attachment.txt`: `c7f94c54296fdc83d2d595189356d2079e5911fca6738ad2f1b1b87a0df98cc3`
+
+Run the complete object-removal, page-rendering, redaction, and saved-page verification test:
+
+```bash
+cargo test -p sharegate pdf_pipeline::tests::fixture_reconstruction_omits_hidden_and_active_source_objects -- --nocapture
+```
+
+For manual packaged acceptance, choose the fixture in PDF mode, confirm the expected counts, add a cover around the page 3 marker, keep no automatic finding, save a separate `.redacted.pdf`, and require all pages and detectors to pass. Render source and final pages only under `tmp/pdfs/`, remove those temporary renders after inspection, and keep the final PDF under `output/pdf/`. Confirm the source hash remains unchanged and the output bytes contain none of `SG_PDF_SOURCE_MARKER`, `SG_PDF_INVISIBLE_MARKER`, `SG_PDF_METADATA_MARKER`, `SG_PDF_JAVASCRIPT_MARKER`, `SG_PDF_FORM_MARKER`, `SG_PDF_ATTACHMENT_MARKER`, or `SG_PDF_ANNOTATION_MARKER`.

@@ -745,4 +745,139 @@ mod tests {
             .to_rgb8();
         assert_eq!(pixels.get_pixel(72, 108).0, REDACTION_INK);
     }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn fixture_reconstruction_omits_hidden_and_active_source_objects() {
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("fixtures")
+            .join("pdf-sensitive-sample.pdf");
+        let source_before = std::fs::read(&fixture).unwrap();
+        for marker in [
+            b"SG_PDF_SOURCE_MARKER".as_slice(),
+            b"SG_PDF_INVISIBLE_MARKER",
+            b"SG_PDF_METADATA_MARKER",
+            b"SG_PDF_JAVASCRIPT_MARKER",
+            b"SG_PDF_FORM_MARKER",
+            b"SG_PDF_ATTACHMENT_MARKER",
+            b"SG_PDF_ANNOTATION_MARKER",
+            b"/AcroForm",
+            b"/EmbeddedFiles",
+            b"/JavaScript",
+            b"/Annots",
+        ] {
+            assert!(
+                contains_bytes(&source_before, marker),
+                "missing source marker"
+            );
+        }
+
+        let prepared = crate::pdf_sessions::prepare_pdf_file(&fixture).unwrap();
+        assert_eq!(prepared.pages.len(), 3);
+        for page in &prepared.pages {
+            assert!(
+                page.reviewed.checks.all_complete(),
+                "page {} has incomplete checks {:?}: OCR: {}; face: {}; QR: {}; barcode: {}",
+                page.descriptor.page_index,
+                page.reviewed.checks,
+                page.ocr.message,
+                page.faces.message,
+                page.qr.message,
+                page.barcodes.message
+            );
+        }
+        let count = |page_index: usize, kind: DetectorKind| {
+            prepared.pages[page_index]
+                .reviewed
+                .findings
+                .iter()
+                .filter(|finding| finding.kind == kind)
+                .count()
+        };
+        assert_eq!(
+            count(0, DetectorKind::Text),
+            3,
+            "page one OCR report: {:?}",
+            prepared.pages[0].ocr.report
+        );
+        assert_eq!(count(1, DetectorKind::Face), 1);
+        assert_eq!(count(1, DetectorKind::Qr), 1);
+        assert_eq!(count(1, DetectorKind::Barcode), 3);
+        assert!(prepared.pages[2].reviewed.findings.is_empty());
+        let decisions = prepared
+            .pages
+            .iter()
+            .flat_map(|page| &page.reviewed.findings)
+            .map(|finding| ImageRedactionDecision {
+                id: finding.id.clone(),
+                enabled: true,
+            })
+            .collect::<Vec<_>>();
+        let resolved = ResolvedPdfSession {
+            canonical_path: prepared.canonical_path,
+            source_bytes: Arc::new(prepared.source_bytes),
+            fingerprint: prepared.fingerprint,
+            filename: prepared.filename,
+            pages: Arc::new(prepared.pages),
+        };
+        let manual = [PdfManualRegion {
+            id: "manual-page-three".to_owned(),
+            page_index: 2,
+            rectangle: NormalizedRect {
+                x: 0.32,
+                y: 0.36,
+                width: 0.37,
+                height: 0.33,
+            },
+        }];
+
+        let rebuilt = build_safety_copy(&resolved, &decisions, &manual).unwrap();
+        assert_eq!(rebuilt.expected_pages.len(), 3);
+        assert_eq!(rebuilt.manual_regions, 1);
+        assert_eq!(rebuilt.redacted_findings, 8);
+        for marker in [
+            b"SG_PDF_SOURCE_MARKER".as_slice(),
+            b"SG_PDF_INVISIBLE_MARKER",
+            b"SG_PDF_METADATA_MARKER",
+            b"SG_PDF_JAVASCRIPT_MARKER",
+            b"SG_PDF_FORM_MARKER",
+            b"SG_PDF_ATTACHMENT_MARKER",
+            b"SG_PDF_ANNOTATION_MARKER",
+            b"/AcroForm",
+            b"/EmbeddedFiles",
+            b"/JavaScript",
+            b"/Annots",
+        ] {
+            assert!(
+                !contains_bytes(&rebuilt.bytes, marker),
+                "rebuilt output retained a source marker"
+            );
+        }
+        let verification = verify_saved_copy(&rebuilt.bytes, &rebuilt).unwrap();
+        assert!(verification.saved_bytes_match);
+        assert!(verification.page_count_match);
+        assert_eq!(verification.pages_rendered, 3);
+        assert_eq!(
+            verification.status,
+            VerificationStatus::Verified,
+            "{}",
+            verification.message
+        );
+        assert_eq!(std::fs::read(&fixture).unwrap(), source_before);
+
+        if let Some(path) = std::env::var_os("SHAREGATE_PDF_ACCEPTANCE_OUTPUT") {
+            let path = PathBuf::from(path);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).unwrap();
+            }
+            std::fs::write(path, &rebuilt.bytes).unwrap();
+        }
+    }
+
+    fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
+        haystack
+            .windows(needle.len())
+            .any(|window| window == needle)
+    }
 }

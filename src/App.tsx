@@ -561,7 +561,7 @@ function App() {
       </div>
 
       <footer className="app-footer">
-        <span>ShareGate v0.1 foundation</span>
+        <span>ShareGate v0.1 · Milestone D</span>
         <span><span className="offline-dot" /> Designed to work offline</span>
       </footer>
     </div>

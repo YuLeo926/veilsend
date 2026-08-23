@@ -1,0 +1,2 @@
+SG_PDF_ATTACHMENT_MARKER
+Synthetic attachment for ShareGate PDF acceptance.

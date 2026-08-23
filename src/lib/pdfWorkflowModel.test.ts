@@ -3,8 +3,10 @@ import type { PdfSession } from "./types";
 import {
   buildPdfDefaultDecisions,
   buildPdfFindings,
+  normalizedRectangleFromPoints,
   pageChecksComplete,
   remainingPdfRiskCount,
+  resizeNormalizedRectangle,
 } from "./pdfWorkflowModel";
 
 const session = {
@@ -86,5 +88,30 @@ describe("PDF workflow model", () => {
         barcodesRemaining: 4,
       },
     } as never)).toBe(10);
+  });
+
+  it("normalizes reverse-direction manual cover drawing", () => {
+    expect(normalizedRectangleFromPoints(0.8, 0.7, 0.2, 0.1)).toEqual({
+      x: 0.2,
+      y: 0.1,
+      width: 0.6000000000000001,
+      height: 0.6,
+    });
+  });
+
+  it("keeps resized manual covers inside the page and above the minimum", () => {
+    const initial = { x: 0.8, y: 0.7, width: 0.1, height: 0.1 };
+    expect(resizeNormalizedRectangle(initial, 0.9, 0.8, 1.4, 1.2)).toEqual({
+      x: 0.8,
+      y: 0.7,
+      width: 0.19999999999999996,
+      height: 0.30000000000000004,
+    });
+    expect(resizeNormalizedRectangle(initial, 0.9, 0.8, 0, 0)).toEqual({
+      x: 0.8,
+      y: 0.7,
+      width: 0.003,
+      height: 0.003,
+    });
   });
 });

@@ -399,6 +399,7 @@ button { color: inherit; }
 .pdf-manual-region { position: absolute; min-width: 4px; min-height: 4px; border: 2px solid #e75c2d; background: rgba(27,25,22,.82); box-shadow: 0 0 0 1px rgba(255,255,255,.8); pointer-events: none; }
 .pdf-manual-region.draft { border-style: dashed; background: rgba(27,25,22,.45); }
 .pdf-manual-region b { position: absolute; left: -2px; top: -17px; height: 15px; padding: 0 4px; display: grid; place-items: center; color: white; border-radius: 3px 3px 3px 0; background: #1b1916; font: 850 7px/1 "Aptos", sans-serif; }
+.pdf-resize-handle { position: absolute; right: -7px; bottom: -7px; width: 14px; height: 14px; padding: 0; border: 2px solid white; border-radius: 50%; background: var(--orange); box-shadow: 0 1px 4px rgba(45,35,28,.32); cursor: nwse-resize; pointer-events: auto; touch-action: none; }
 .pdf-preview-loading { position: absolute; z-index: 5; top: 10px; left: 50%; padding: 7px 10px; display: flex; align-items: center; gap: 6px; color: var(--green); border: 1px solid rgba(36,106,80,.25); border-radius: 99px; background: rgba(248,246,239,.94); box-shadow: 0 5px 14px rgba(45,39,32,.1); transform: translateX(-50%); font-size: 8px; }
 .pdf-page-promise { min-height: 35px; padding: 8px 13px; display: flex; align-items: center; gap: 6px; color: var(--green); border-top: 1px solid var(--line); background: rgba(226,239,229,.55); font-size: 8px; }
 
@@ -408,6 +409,10 @@ button { color: inherit; }
 .pdf-check-strip span.complete { color: var(--green); background: rgba(226,239,229,.7); }
 .pdf-check-strip span.review { color: #7f4516; background: #f5ead5; }
 .pdf-inspector-heading.manual { margin-top: 6px; border-top: 1px solid var(--line); }
+.pdf-manual-actions { display: flex; align-items: center; gap: 4px; }
+.pdf-manual-actions button { width: 22px; height: 22px; display: grid; place-items: center; padding: 0; color: var(--muted); border: 1px solid var(--line-dark); border-radius: 4px; background: var(--paper); cursor: pointer; }
+.pdf-manual-actions button:hover:not(:disabled) { color: var(--orange-dark); border-color: var(--orange); }
+.pdf-manual-actions button:disabled { opacity: .35; cursor: not-allowed; }
 .pdf-finding-card { position: relative; margin: 8px; padding: 13px 73px 13px 45px; border: 1px solid var(--line); border-left: 3px solid var(--orange); border-radius: 7px; background: rgba(249,247,241,.82); transition: opacity .16s, background .16s; }
 .pdf-finding-card.excluded { opacity: .6; border-left-color: #777269; background: rgba(235,232,225,.55); }
 .pdf-finding-card .metadata-icon { left: 9px; top: 31px; width: 27px; height: 27px; }

@@ -19,6 +19,7 @@ import {
   ScanLine,
   ShieldCheck,
   Trash2,
+  Undo2,
 } from "lucide-react";
 import {
   cleanPdfFile,
@@ -31,8 +32,10 @@ import {
   buildPdfDefaultDecisions,
   buildPdfFindings,
   buildPdfPageFindings,
+  normalizedRectangleFromPoints,
   pageChecksComplete,
   remainingPdfRiskCount,
+  resizeNormalizedRectangle,
   type PdfFindingKind,
 } from "../lib/pdfWorkflowModel";
 import type {
@@ -48,6 +51,12 @@ import { InputModeTabs, type InputMode } from "./InputModeTabs";
 
 type Stage = "add" | "review" | "result";
 type DrawDraft = { originX: number; originY: number; rectangle: NormalizedRect };
+type ResizeDraft = {
+  id: string;
+  startX: number;
+  startY: number;
+  initial: NormalizedRect;
+};
 
 const severityLabel: Record<Severity, string> = {
   low: "Notice",
@@ -78,18 +87,13 @@ function readableError(error: unknown): string {
 
 function pointInPage(event: ReactPointerEvent<HTMLDivElement>) {
   const bounds = event.currentTarget.getBoundingClientRect();
-  return {
-    x: Math.min(1, Math.max(0, (event.clientX - bounds.left) / bounds.width)),
-    y: Math.min(1, Math.max(0, (event.clientY - bounds.top) / bounds.height)),
-  };
+  return pointInBounds(event.clientX, event.clientY, bounds);
 }
 
-function rectangleFrom(originX: number, originY: number, x: number, y: number): NormalizedRect {
+function pointInBounds(clientX: number, clientY: number, bounds: DOMRect) {
   return {
-    x: Math.min(originX, x),
-    y: Math.min(originY, y),
-    width: Math.abs(x - originX),
-    height: Math.abs(y - originY),
+    x: Math.min(1, Math.max(0, (clientX - bounds.left) / bounds.width)),
+    y: Math.min(1, Math.max(0, (clientY - bounds.top) / bounds.height)),
   };
 }
 
@@ -108,12 +112,14 @@ export function PdfWorkflow({
   const [result, setResult] = useState<CleanedPdfFile | null>(null);
   const [decisions, setDecisions] = useState<Record<string, ImageRedactionDecision>>({});
   const [manualRegions, setManualRegions] = useState<PdfManualRegion[]>([]);
+  const [manualHistory, setManualHistory] = useState<PdfManualRegion[][]>([]);
   const [selectedPage, setSelectedPage] = useState(0);
   const [preview, setPreview] = useState<PdfPagePreview | null>(null);
   const [previewBusy, setPreviewBusy] = useState(false);
   const [busy, setBusy] = useState(false);
   const [drawMode, setDrawMode] = useState(false);
   const [draft, setDraft] = useState<DrawDraft | null>(null);
+  const [resizeDraft, setResizeDraft] = useState<ResizeDraft | null>(null);
 
   const allFindings = useMemo(() => session ? buildPdfFindings(session) : [], [session]);
   const currentPage = session?.pages[selectedPage] ?? null;
@@ -154,7 +160,9 @@ export function PdfWorkflow({
     setPreview(null);
     setDecisions({});
     setManualRegions([]);
+    setManualHistory([]);
     setDraft(null);
+    setResizeDraft(null);
     setDrawMode(false);
   }
 
@@ -237,14 +245,24 @@ export function PdfWorkflow({
     const point = pointInPage(event);
     setDraft((current) => current ? {
       ...current,
-      rectangle: rectangleFrom(current.originX, current.originY, point.x, point.y),
+      rectangle: normalizedRectangleFromPoints(
+        current.originX,
+        current.originY,
+        point.x,
+        point.y,
+      ),
     } : null);
   }
 
   function finishDraw(event: ReactPointerEvent<HTMLDivElement>) {
     if (!draft) return;
     const point = pointInPage(event);
-    const rectangle = rectangleFrom(draft.originX, draft.originY, point.x, point.y);
+    const rectangle = normalizedRectangleFromPoints(
+      draft.originX,
+      draft.originY,
+      point.x,
+      point.y,
+    );
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
@@ -252,7 +270,69 @@ export function PdfWorkflow({
     if (rectangle.width < 0.003 || rectangle.height < 0.003) return;
     const id = globalThis.crypto?.randomUUID?.()
       ?? `region-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-    setManualRegions((current) => [...current, { id, pageIndex: selectedPage, rectangle }]);
+    updateManualRegions((current) => [...current, { id, pageIndex: selectedPage, rectangle }]);
+  }
+
+  function updateManualRegions(
+    update: (current: PdfManualRegion[]) => PdfManualRegion[],
+  ) {
+    setManualRegions((current) => {
+      const next = update(current);
+      if (next === current) return current;
+      setManualHistory((history) => [...history, current].slice(-50));
+      return next;
+    });
+  }
+
+  function undoManualChange() {
+    setManualHistory((history) => {
+      const previous = history.at(-1);
+      if (!previous) return history;
+      setManualRegions(previous);
+      return history.slice(0, -1);
+    });
+  }
+
+  function beginResize(
+    event: ReactPointerEvent<HTMLButtonElement>,
+    region: PdfManualRegion,
+  ) {
+    event.stopPropagation();
+    const layer = event.currentTarget.closest(".pdf-draw-layer");
+    if (!(layer instanceof HTMLElement)) return;
+    const point = pointInBounds(event.clientX, event.clientY, layer.getBoundingClientRect());
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setManualHistory((history) => [...history, manualRegions].slice(-50));
+    setResizeDraft({
+      id: region.id,
+      startX: point.x,
+      startY: point.y,
+      initial: region.rectangle,
+    });
+  }
+
+  function updateResize(event: ReactPointerEvent<HTMLButtonElement>) {
+    if (!resizeDraft || !event.currentTarget.hasPointerCapture(event.pointerId)) return;
+    const layer = event.currentTarget.closest(".pdf-draw-layer");
+    if (!(layer instanceof HTMLElement)) return;
+    const point = pointInBounds(event.clientX, event.clientY, layer.getBoundingClientRect());
+    const rectangle = resizeNormalizedRectangle(
+      resizeDraft.initial,
+      resizeDraft.startX,
+      resizeDraft.startY,
+      point.x,
+      point.y,
+    );
+    setManualRegions((current) => current.map((region) => region.id === resizeDraft.id
+      ? { ...region, rectangle }
+      : region));
+  }
+
+  function finishResize(event: ReactPointerEvent<HTMLButtonElement>) {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    setResizeDraft(null);
   }
 
   if (stage === "add") {
@@ -400,7 +480,18 @@ export function PdfWorkflow({
                         width: `${region.rectangle.width * 100}%`,
                         height: `${region.rectangle.height * 100}%`,
                       }}
-                    ><b>M{index + 1}</b></span>
+                    >
+                      <b>M{index + 1}</b>
+                      <button
+                        className="pdf-resize-handle"
+                        type="button"
+                        aria-label={`Resize manual cover ${index + 1}`}
+                        onPointerDown={(event) => beginResize(event, region)}
+                        onPointerMove={updateResize}
+                        onPointerUp={finishResize}
+                        onPointerCancel={finishResize}
+                      />
+                    </span>
                   ))}
                   {draft && <span
                     className="pdf-manual-region draft"
@@ -457,11 +548,23 @@ export function PdfWorkflow({
             })}
             {!pageFindings.length && <div className="pdf-empty-page"><ShieldCheck size={22} /><strong>No automatic findings</strong><span>Inspect the page and add a manual cover if needed.</span></div>}
 
-            <div className="pdf-inspector-heading manual"><span>Manual covers</span><b>{currentManual.length}</b></div>
+            <div className="pdf-inspector-heading manual">
+              <span>Manual covers</span>
+              <div className="pdf-manual-actions">
+                <b>{currentManual.length}</b>
+                <button type="button" disabled={!manualHistory.length} onClick={undoManualChange} aria-label="Undo last manual cover change"><Undo2 size={12} /></button>
+                <button
+                  type="button"
+                  disabled={!currentManual.length}
+                  onClick={() => updateManualRegions((current) => current.filter((region) => region.pageIndex !== selectedPage))}
+                  aria-label="Clear manual covers from this page"
+                ><Trash2 size={12} /></button>
+              </div>
+            </div>
             {currentManual.map((region, index) => (
               <div className="manual-region-row" key={region.id}>
                 <span>M{index + 1}</span><div><strong>Opaque cover</strong><small>{Math.round(region.rectangle.width * 100)}% × {Math.round(region.rectangle.height * 100)}% of page</small></div>
-                <button type="button" onClick={() => setManualRegions((current) => current.filter((item) => item.id !== region.id))} aria-label={`Delete manual cover ${index + 1}`}><Trash2 size={14} /></button>
+                <button type="button" onClick={() => updateManualRegions((current) => current.filter((item) => item.id !== region.id))} aria-label={`Delete manual cover ${index + 1}`}><Trash2 size={14} /></button>
               </div>
             ))}
             {!currentManual.length && <p className="manual-cover-hint">Use “Add manual cover,” then drag over anything you do not want visible.</p>}

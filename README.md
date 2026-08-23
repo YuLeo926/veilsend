@@ -2,13 +2,13 @@
 
 **Scan anything before it leaves your computer.**
 
-ShareGate is a local-first outbound safety gate for text, logs, configuration files, screenshots, and images. It detects likely credentials and personal context, finds faces, QR codes, one-dimensional barcodes, and hidden image metadata, irreversibly covers selected visual risks, produces a separate clean copy, and verifies the actual saved output before it is shared.
+ShareGate is a local-first outbound safety gate for text, logs, configuration files, screenshots, images, and PDFs. It detects likely credentials and personal context, finds faces, QR codes, one-dimensional barcodes, and hidden image metadata, irreversibly covers selected visual risks, produces a separate clean copy, and verifies the actual saved output before it is shared.
 
 > ShareGate reduces accidental disclosure. It does not guarantee that content is safe and is not a compliance product.
 
 ## Current milestone
 
-Milestone C includes the complete text workflow plus a unified local image-safety review:
+Milestone D includes the complete text and image workflows plus a Windows-only flattened PDF safety path:
 
 - paste text or open/drop UTF-8 `.txt`, `.log`, `.json`, and `.env` files;
 - scan with deterministic local rules;
@@ -38,9 +38,17 @@ Milestone C includes the complete text workflow plus a unified local image-safet
 - preserve ICC colour profiles;
 - save to a separate `.cleaned` image and verify both metadata removal and an unchanged pixel stream;
 - block lossless cleaning when EXIF orientation is non-normal or cannot be safely parsed;
-- reread the actual saved output and rerun metadata, text, face, QR, and barcode checks before reporting a result.
+- reread the actual saved output and rerun metadata, text, face, QR, and barcode checks before reporting a result;
+- choose an unencrypted local PDF up to 50 MiB and 50 pages without entering or storing a password;
+- render every page in memory at a fixed 144 DPI with Windows' local PDF renderer and process full-resolution pages sequentially;
+- review page thumbnails, automatic text/face/QR/barcode findings, and one selected-page preview without writing source page images to temporary files;
+- add, resize, delete, undo, or clear backend-validated manual cover regions;
+- rebuild a separate `.redacted.pdf` from lossless RGB page pixels, with exactly one controlled image per page and no copied source PDF object graph;
+- omit original text layers, metadata, links, JavaScript, forms, annotations, attachments, signatures, history, and other active or hidden objects by reconstruction;
+- reread the actual saved PDF, require byte-for-byte equality with the generated buffer, render every page again, compare page count and sizes, verify opaque covers, and rerun all four visual detectors;
+- report `Verified` only when all saved-page checks complete with no exceptions or unexpected findings.
 
-PDF and Office files are intentionally outside this image slice. PDF safety is being designed as a separate renderer-and-reconstruction trust boundary rather than being folded into the image path.
+Flattened PDFs are intentionally not searchable, selectable, editable, tagged for accessibility, or capable of preserving forms, signatures, bookmarks, links, attachments, or annotations. Office files and encrypted PDFs remain out of scope.
 
 ## Architecture
 
@@ -49,7 +57,7 @@ React + TypeScript review interface
               |
        Tauri command boundary
               |
- Windows OCR/face/clipboard adapters + sharegate-core (Rust)
+ Windows PDF/OCR/face/clipboard adapters + sharegate-core (Rust)
        inspect -> clean -> verify
 ```
 
@@ -74,7 +82,7 @@ For the desktop app:
 npm run tauri dev
 ```
 
-Use **Try safe sample** in text mode. Image mode opens local JPEG and PNG files through the native file picker or accepts a bitmap from the focused Windows clipboard. All repository fixtures are synthetic.
+Use **Try safe sample** in text mode. Image mode opens local JPEG and PNG files through the native file picker or accepts a bitmap from the focused Windows clipboard. PDF mode opens `fixtures/pdf-sensitive-sample.pdf` for the bounded three-page acceptance flow. All repository fixtures are synthetic.
 
 ## Verify the project
 
@@ -101,16 +109,20 @@ npm run tauri build -- --no-bundle
 - Source files are opened read-only by the interface and never overwritten.
 - Clipboard access occurs only after **Paste screenshot** or a qualifying `Ctrl+V`; ShareGate does not poll, monitor, clear, or write clipboard history.
 - Pasted source bytes remain in one desktop-owned in-memory session and are dropped when replaced, cleared, or the app exits. No temporary source image is created.
-- Saving is explicit and defaults to a `.cleaned` or `.redacted` filename.
-- Text input is limited to 10 MiB; image input is limited to 25 MiB.
+- Saving is explicit and defaults to a `.cleaned` or `.redacted` filename. ShareGate rejects a PDF destination equal to the source path.
+- Text input is limited to 10 MiB; image input to 25 MiB; PDF input to 50 MiB and 50 pages. PDF rendering is limited to 40 million pixels per page and 120 million per document; output is limited to 300 MiB.
 - Metadata-only image cleaning preserves the encoded pixel stream and ICC colour profiles; verification compares a SHA-256 fingerprint of the encoded pixel data before and after cleaning.
 - Visual redaction rewrites selected pixels and always exports PNG. It strips container metadata and reruns Windows OCR, face, deterministic text, QR, and barcode checks on the saved file.
 - The complete OCR transcript is not sent to the interface. Only masked rule findings, categories, and the image rectangles needed for review cross the desktop command boundary.
 - Decoded QR payload bytes stay inside the Rust core. The interface receives only a coarse type, byte count, severity, opaque ID, and review rectangle.
 - Face detection returns location only. It creates no crop or embedding and performs no identity, emotion, age, gender, or other attribute inference.
 - Decoded one-dimensional barcode payloads stay inside the Rust core. The interface receives only the supported format, encoded length, opaque ID, and review rectangle.
+- PDF source bytes, canonical source path, full-resolution pages, and trusted detector geometry remain desktop-owned. Only thumbnails, one bounded preview, masked findings, and opaque IDs cross the interface boundary.
+- PDF export rerenders the immutable reviewed bytes, geometrically rematches automatic findings page by page, validates up to 100 manual regions per page and 1,000 per document, and paints every selected region with opaque pixels.
+- The controlled PDF writer creates a new catalog and page tree containing one lossless RGB image per page. It does not migrate source objects, metadata, text, actions, forms, annotations, names, attachments, outlines, or structure tags.
+- The saved PDF must match the generated SHA-256 and bytes exactly, retain the reviewed page count and physical sizes, rerender completely, preserve every opaque cover, and complete all supported detector checks before it can be `Verified`.
 - Supported detectors can miss obscured faces, unusual layouts, unreadable bars, unsupported symbols, or visible content OCR does not recognize. An unavailable or incomplete detector yields `Needs review`, never `Verified`.
-- `Verified` covers the supported local detector and metadata checks; it is not proof that an image contains no sensitive information.
+- `Verified` covers the supported local detector and reconstruction checks; it is not proof that an image or PDF contains no sensitive information.
 
 The browser preview itself is delivered by a local Vite server during development. The packaged application is the intended offline distribution.
 
@@ -121,10 +133,12 @@ The browser preview itself is delivered by a local Vite server during developmen
 - [Local OCR and visual redaction design](docs/superpowers/specs/2026-08-12-sharegate-ocr-redaction-design.md)
 - [Local QR redaction design](docs/superpowers/specs/2026-08-12-sharegate-qr-redaction-design.md)
 - [Face, barcode, and screenshot safety design](docs/superpowers/specs/2026-08-19-sharegate-visual-safety-expansion-design.md)
+- [Flattened PDF safety design](docs/superpowers/specs/2026-08-23-sharegate-pdf-redaction-design.md)
 - [Milestone A implementation plan](docs/superpowers/plans/2026-08-12-sharegate-milestone-a.md)
 - [OCR and visual redaction implementation plan](docs/superpowers/plans/2026-08-12-sharegate-ocr-redaction.md)
 - [QR redaction implementation plan](docs/superpowers/plans/2026-08-12-sharegate-qr-redaction.md)
 - [Face, barcode, and screenshot implementation plan](docs/superpowers/plans/2026-08-19-sharegate-visual-safety-expansion.md)
+- [Flattened PDF implementation plan](docs/superpowers/plans/2026-08-23-sharegate-pdf-redaction.md)
 - [Security policy and threat model](SECURITY.md)
 - [Development and verification notes](docs/development.md)
 
