@@ -44,7 +44,7 @@ import type {
   ImageRedactionDecision,
   Severity,
 } from "../lib/types";
-import { InputModeTabs } from "./InputModeTabs";
+import { InputModeTabs, type InputMode } from "./InputModeTabs";
 
 type Stage = "add" | "review" | "result";
 
@@ -92,12 +92,12 @@ function readableError(error: unknown): string {
 export function ImageWorkflow({
   stage,
   onStageChange,
-  onSwitchToText,
+  onSwitchMode,
   onError,
 }: {
   stage: Stage;
   onStageChange: (stage: Stage) => void;
-  onSwitchToText: () => void;
+  onSwitchMode: (mode: Exclude<InputMode, "image">) => void;
   onError: (message: string) => void;
 }) {
   const [session, setSession] = useState<ImageSession | null>(null);
@@ -213,21 +213,21 @@ export function ImageWorkflow({
     }
   }
 
-  async function switchToText() {
+  async function switchInputMode(mode: Exclude<InputMode, "image">) {
     try {
       await clearCurrentSession();
       onError("");
     } catch (error) {
       onError(readableError(error));
     } finally {
-      onSwitchToText();
+      onSwitchMode(mode);
     }
   }
 
   if (stage === "add") {
     return (
       <section className="stage-view add-stage image-add-stage">
-        <InputModeTabs active="image" onChange={(mode) => mode === "text" && void switchToText()} />
+        <InputModeTabs active="image" onChange={(mode) => mode !== "image" && void switchInputMode(mode)} />
         <div className="eyebrow"><Fingerprint size={15} /> Five local image checks</div>
         <h1>Find what the image<br />should not reveal.</h1>
         <p className="lead">Choose a JPEG or PNG, or paste a screenshot. ShareGate checks visible text, faces, QR codes, one-dimensional barcodes, and hidden metadata—all locally.</p>

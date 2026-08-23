@@ -29,6 +29,7 @@ import {
 } from "lucide-react";
 import { ImageWorkflow } from "./components/ImageWorkflow";
 import { InputModeTabs, type InputMode } from "./components/InputModeTabs";
+import { PdfWorkflow } from "./components/PdfWorkflow";
 import { isDesktop, sanitizeText, saveCleanedText, scanText } from "./lib/bridge";
 import { syntheticSample } from "./lib/sample";
 import type {
@@ -338,8 +339,8 @@ function App() {
           <StepRail stage={stage} />
           <PrivacyNote />
           <div className="scope-note">
-            <span>Milestone C</span>
-            <p>Text safety plus local image text, face, QR, barcode, and metadata review.</p>
+            <span>Milestone D</span>
+            <p>Text, image, and flattened PDF safety with local saved-file verification.</p>
           </div>
         </aside>
 
@@ -543,7 +544,16 @@ function App() {
             <ImageWorkflow
               stage={stage}
               onStageChange={setStage}
-              onSwitchToText={() => switchMode("text")}
+              onSwitchMode={switchMode}
+              onError={setError}
+            />
+          )}
+
+          {mode === "pdf" && (
+            <PdfWorkflow
+              stage={stage}
+              onStageChange={setStage}
+              onSwitchMode={switchMode}
               onError={setError}
             />
           )}

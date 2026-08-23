@@ -1,6 +1,6 @@
-import { FileText, Image as ImageIcon } from "lucide-react";
+import { FileStack, FileText, Image as ImageIcon } from "lucide-react";
 
-export type InputMode = "text" | "image";
+export type InputMode = "text" | "image" | "pdf";
 
 export function InputModeTabs({
   active,
@@ -26,6 +26,15 @@ export function InputModeTabs({
         onClick={() => onChange("image")}
       >
         <ImageIcon size={16} /> Images
+        <span>NEW</span>
+      </button>
+      <button
+        type="button"
+        className={active === "pdf" ? "active" : ""}
+        aria-pressed={active === "pdf"}
+        onClick={() => onChange("pdf")}
+      >
+        <FileStack size={16} /> PDF
         <span>NEW</span>
       </button>
     </div>
