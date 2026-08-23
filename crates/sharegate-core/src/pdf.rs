@@ -1,7 +1,7 @@
 use crate::{ImageRect, NormalizedRect, ShareGateError};
-use flate2::{Compression, write::ZlibEncoder};
+use flate2::{Compression, read::ZlibDecoder, write::ZlibEncoder};
 use pdf_writer::{Content, Filter, Finish, Name, Pdf, Rect, Ref};
-use std::io::Write;
+use std::io::{Read, Write};
 
 pub const DEFAULT_MAX_PDF_PAGES: usize = 50;
 pub const DEFAULT_MAX_PDF_SOURCE_BYTES: usize = 50 * 1024 * 1024;
@@ -36,6 +36,15 @@ pub struct PdfPageRaster {
     pub width_points: f32,
     pub height_points: f32,
     pub rgb_bytes: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PdfPageImage {
+    pub width_pixels: u32,
+    pub height_pixels: u32,
+    pub width_points: f32,
+    pub height_points: f32,
+    pub compressed_rgb_bytes: Vec<u8>,
 }
 
 pub fn normalized_rect_to_pixels(
@@ -99,6 +108,36 @@ pub fn build_flattened_pdf(
     pages: &[PdfPageRaster],
     limits: PdfBuildLimits,
 ) -> Result<Vec<u8>, ShareGateError> {
+    let compressed = pages
+        .iter()
+        .map(|page| compress_pdf_page_with_limits(page, limits))
+        .collect::<Result<Vec<_>, _>>()?;
+    build_flattened_pdf_from_images(&compressed, limits)
+}
+
+pub fn compress_pdf_page(page: &PdfPageRaster) -> Result<PdfPageImage, ShareGateError> {
+    compress_pdf_page_with_limits(page, PdfBuildLimits::default())
+}
+
+fn compress_pdf_page_with_limits(
+    page: &PdfPageRaster,
+    limits: PdfBuildLimits,
+) -> Result<PdfPageImage, ShareGateError> {
+    let mut total_pixels = 0;
+    validate_raster(page, limits, &mut total_pixels)?;
+    Ok(PdfPageImage {
+        width_pixels: page.width_pixels,
+        height_pixels: page.height_pixels,
+        width_points: page.width_points,
+        height_points: page.height_points,
+        compressed_rgb_bytes: compress_rgb(&page.rgb_bytes)?,
+    })
+}
+
+pub fn build_flattened_pdf_from_images(
+    pages: &[PdfPageImage],
+    limits: PdfBuildLimits,
+) -> Result<Vec<u8>, ShareGateError> {
     if pages.is_empty() {
         return Err(invalid_pdf("A safety copy needs at least one page."));
     }
@@ -110,7 +149,7 @@ pub fn build_flattened_pdf(
 
     let mut total_pixels = 0_u64;
     for page in pages {
-        validate_page(page, limits, &mut total_pixels)?;
+        validate_image(page, limits, &mut total_pixels)?;
     }
 
     let catalog_id = Ref::new(1);
@@ -158,23 +197,79 @@ fn snapped_ceil(value: f64) -> f64 {
     }
 }
 
-fn validate_page(
+fn validate_raster(
     page: &PdfPageRaster,
     limits: PdfBuildLimits,
     total_pixels: &mut u64,
 ) -> Result<(), ShareGateError> {
-    if page.width_pixels == 0 || page.height_pixels == 0 {
+    let pixels = validate_dimensions(
+        page.width_pixels,
+        page.height_pixels,
+        page.width_points,
+        page.height_points,
+        limits,
+        total_pixels,
+    )?;
+    let expected = pixels
+        .checked_mul(3)
+        .and_then(|value| usize::try_from(value).ok())
+        .ok_or_else(|| invalid_pdf("A PDF page buffer length overflowed."))?;
+    if page.rgb_bytes.len() != expected {
+        return Err(invalid_pdf("A PDF page RGB buffer has an invalid length."));
+    }
+    Ok(())
+}
+
+fn validate_image(
+    page: &PdfPageImage,
+    limits: PdfBuildLimits,
+    total_pixels: &mut u64,
+) -> Result<(), ShareGateError> {
+    let pixels = validate_dimensions(
+        page.width_pixels,
+        page.height_pixels,
+        page.width_points,
+        page.height_points,
+        limits,
+        total_pixels,
+    )?;
+    let expected = pixels
+        .checked_mul(3)
+        .ok_or_else(|| invalid_pdf("A PDF page buffer length overflowed."))?;
+    let mut decoder = ZlibDecoder::new(page.compressed_rgb_bytes.as_slice());
+    let decoded = std::io::copy(
+        &mut decoder.by_ref().take(expected + 1),
+        &mut std::io::sink(),
+    )
+    .map_err(|_| invalid_pdf("A compressed PDF page is invalid."))?;
+    if decoded != expected {
+        return Err(invalid_pdf(
+            "A compressed PDF page RGB buffer has an invalid length.",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_dimensions(
+    width_pixels: u32,
+    height_pixels: u32,
+    width_points: f32,
+    height_points: f32,
+    limits: PdfBuildLimits,
+    total_pixels: &mut u64,
+) -> Result<u64, ShareGateError> {
+    if width_pixels == 0 || height_pixels == 0 {
         return Err(invalid_pdf("A PDF page has zero pixel dimensions."));
     }
-    if !page.width_points.is_finite()
-        || !page.height_points.is_finite()
-        || page.width_points <= 0.0
-        || page.height_points <= 0.0
+    if !width_points.is_finite()
+        || !height_points.is_finite()
+        || width_points <= 0.0
+        || height_points <= 0.0
     {
         return Err(invalid_pdf("A PDF page has invalid physical dimensions."));
     }
-    let pixels = u64::from(page.width_pixels)
-        .checked_mul(u64::from(page.height_pixels))
+    let pixels = u64::from(width_pixels)
+        .checked_mul(u64::from(height_pixels))
         .ok_or_else(|| invalid_pdf("A PDF page pixel count overflowed."))?;
     if pixels > limits.max_page_pixels {
         return Err(invalid_pdf("A PDF page exceeds the decoded-pixel limit."));
@@ -185,17 +280,10 @@ fn validate_page(
     if *total_pixels > limits.max_total_pixels {
         return Err(invalid_pdf("The PDF exceeds the aggregate pixel limit."));
     }
-    let expected = pixels
-        .checked_mul(3)
-        .and_then(|value| usize::try_from(value).ok())
-        .ok_or_else(|| invalid_pdf("A PDF page buffer length overflowed."))?;
-    if page.rgb_bytes.len() != expected {
-        return Err(invalid_pdf("A PDF page RGB buffer has an invalid length."));
-    }
-    i32::try_from(page.width_pixels)
-        .and_then(|_| i32::try_from(page.height_pixels))
+    i32::try_from(width_pixels)
+        .and_then(|_| i32::try_from(height_pixels))
         .map_err(|_| invalid_pdf("A PDF page dimension exceeds the writer limit."))?;
-    Ok(())
+    Ok(pixels)
 }
 
 fn page_refs(index: usize) -> (Ref, Ref, Ref) {
@@ -204,7 +292,7 @@ fn page_refs(index: usize) -> (Ref, Ref, Ref) {
     (Ref::new(base), Ref::new(base + 1), Ref::new(base + 2))
 }
 
-fn write_page(pdf: &mut Pdf, index: usize, page: &PdfPageRaster) -> Result<(), ShareGateError> {
+fn write_page(pdf: &mut Pdf, index: usize, page: &PdfPageImage) -> Result<(), ShareGateError> {
     const IMAGE_NAME: Name<'static> = Name(b"Im0");
     let (page_id, image_id, content_id) = page_refs(index);
     let media_box = Rect::new(0.0, 0.0, page.width_points, page.height_points);
@@ -219,8 +307,7 @@ fn write_page(pdf: &mut Pdf, index: usize, page: &PdfPageRaster) -> Result<(), S
         .pair(IMAGE_NAME, image_id);
     page_writer.finish();
 
-    let encoded = compress_rgb(&page.rgb_bytes)?;
-    let mut image = pdf.image_xobject(image_id, &encoded);
+    let mut image = pdf.image_xobject(image_id, &page.compressed_rgb_bytes);
     image.filter(Filter::FlateDecode);
     image.width(
         i32::try_from(page.width_pixels)

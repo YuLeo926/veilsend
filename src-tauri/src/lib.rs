@@ -14,6 +14,7 @@ use sharegate_core::{
 
 mod image_pipeline;
 mod image_sessions;
+mod pdf_pipeline;
 mod pdf_sessions;
 mod windows_clipboard;
 mod windows_faces;
@@ -25,6 +26,7 @@ use image_pipeline::{
     inspect_visual, resolve_decisions,
 };
 use image_sessions::{ImageSessionStore, ImageSessionSummary, ImageSourceKind};
+use pdf_pipeline::CleanedPdfFile;
 use pdf_sessions::{PdfPagePreview, PdfSessionStore, PdfSessionSummary};
 
 #[derive(Debug, Serialize)]
@@ -190,6 +192,21 @@ async fn get_pdf_page_preview(
 #[tauri::command]
 fn clear_pdf_session(state: tauri::State<'_, PdfSessionStore>) -> Result<(), String> {
     state.clear()
+}
+
+#[tauri::command]
+async fn clean_pdf_file(
+    session_id: String,
+    decisions: Vec<ImageRedactionDecision>,
+    manual_regions: Vec<sharegate_core::PdfManualRegion>,
+    state: tauri::State<'_, PdfSessionStore>,
+) -> Result<Option<CleanedPdfFile>, String> {
+    let resolved = state.resolve(&session_id)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        pdf_pipeline::clean_pdf_file(resolved, decisions, manual_regions)
+    })
+    .await
+    .map_err(|error| format!("The PDF safety-copy builder could not be started: {error}"))?
 }
 
 #[tauri::command]
@@ -549,7 +566,8 @@ pub fn run() {
             clean_image_file,
             pick_pdf,
             get_pdf_page_preview,
-            clear_pdf_session
+            clear_pdf_session,
+            clean_pdf_file
         ])
         .run(tauri::generate_context!())
         .expect("error while running ShareGate");

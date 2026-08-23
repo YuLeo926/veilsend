@@ -241,3 +241,76 @@ export interface CleanedImageFile {
     message: string;
   };
 }
+
+export interface NormalizedRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface PdfManualRegion {
+  id: string;
+  pageIndex: number;
+  rectangle: NormalizedRect;
+}
+
+export interface PdfPageSummary {
+  pageIndex: number;
+  widthPoints: number;
+  heightPoints: number;
+  widthPixels: number;
+  heightPixels: number;
+  thumbnailDataUrl: string;
+  ocr: ImageOcrInspection;
+  faces: ImageFaceInspection;
+  qr: ImageQrInspection;
+  barcodes: ImageBarcodeInspection;
+}
+
+export interface PdfSession {
+  sessionId: string;
+  filename: string;
+  bytes: number;
+  pageCount: number;
+  pages: PdfPageSummary[];
+  warnings: string[];
+}
+
+export interface PdfPagePreview {
+  pageIndex: number;
+  width: number;
+  height: number;
+  previewDataUrl: string;
+}
+
+export interface CleanedPdfFile {
+  savedPath: string;
+  filename: string;
+  originalBytes: number;
+  cleanedSize: number;
+  pagesRebuilt: number;
+  redactedFindings: number;
+  redactedTextFindings: number;
+  redactedFaceFindings: number;
+  redactedQrFindings: number;
+  redactedBarcodeFindings: number;
+  manualRegions: number;
+  redactedRegions: number;
+  exceptions: number;
+  verification: {
+    status: VerificationStatus;
+    savedBytesMatch: boolean;
+    pageCountMatch: boolean;
+    pagesRendered: number;
+    visualFindingsRemaining: number;
+    ocrChecked: boolean;
+    facesRemaining: number;
+    faceChecked: boolean;
+    qrCodesRemaining: number;
+    qrChecked: boolean;
+    barcodesRemaining: number;
+    barcodeChecked: boolean;
+    message: string;
+  };
+}

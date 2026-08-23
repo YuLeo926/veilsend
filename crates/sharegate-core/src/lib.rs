@@ -19,7 +19,8 @@ pub use model::*;
 pub use pdf::{
     DEFAULT_MAX_PDF_OUTPUT_BYTES, DEFAULT_MAX_PDF_PAGE_PIXELS, DEFAULT_MAX_PDF_PAGES,
     DEFAULT_MAX_PDF_SOURCE_BYTES, DEFAULT_MAX_PDF_TOTAL_PIXELS, DEFAULT_PDF_RENDER_DPI,
-    PdfBuildLimits, PdfPageRaster, build_flattened_pdf, normalized_rect_to_pixels,
+    PdfBuildLimits, PdfPageImage, PdfPageRaster, build_flattened_pdf,
+    build_flattened_pdf_from_images, compress_pdf_page, normalized_rect_to_pixels,
 };
 pub use qr::inspect_qr_codes;
 pub use sanitize::sanitize;

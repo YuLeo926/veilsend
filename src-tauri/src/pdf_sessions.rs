@@ -13,7 +13,7 @@ use sharegate_core::{
 use uuid::Uuid;
 
 use crate::{
-    image_pipeline::{ReviewedVisualSnapshot, inspect_visual},
+    image_pipeline::{ReviewedVisualSnapshot, VisualInspectionBundle, inspect_visual},
     windows_pdf::{self, PdfAdapterError, PdfPageDescriptor},
 };
 
@@ -165,7 +165,8 @@ pub fn prepare_pdf_file(path: &Path) -> Result<PreparedPdfSession, String> {
         let thumbnail_data_url = thumbnail_data_url(&rendered.png_bytes, 320)
             .map(|value| value.0)
             .map_err(PdfAdapterError::Invalid)?;
-        let visual = inspect_visual(&rendered.png_bytes);
+        let mut visual = inspect_visual(&rendered.png_bytes);
+        scope_pdf_visual(rendered.descriptor.page_index, &mut visual);
         let reviewed = visual.snapshot();
         pages.push(StoredPdfPage {
             descriptor: rendered.descriptor,
@@ -189,6 +190,31 @@ pub fn prepare_pdf_file(path: &Path) -> Result<PreparedPdfSession, String> {
         filename,
         pages,
     })
+}
+
+pub fn scope_pdf_visual(page_index: usize, visual: &mut VisualInspectionBundle) {
+    let scope = |id: &str| format!("pdf-page-{page_index}:{id}");
+    if let Some(report) = &mut visual.ocr.report {
+        for finding in &mut report.findings {
+            finding.id = scope(&finding.id);
+        }
+    }
+    for finding in &mut visual.faces.findings {
+        finding.id = scope(&finding.id);
+    }
+    if let Some(report) = &mut visual.qr.report {
+        for finding in &mut report.findings {
+            finding.id = scope(&finding.id);
+        }
+    }
+    if let Some(report) = &mut visual.barcodes.report {
+        for finding in &mut report.findings {
+            finding.id = scope(&finding.id);
+        }
+    }
+    for finding in &mut visual.reviewed {
+        finding.id = scope(&finding.id);
+    }
 }
 
 pub fn prepare_page_preview(

@@ -2,8 +2,12 @@ import { invoke } from "@tauri-apps/api/core";
 import { sanitizeInBrowser, scanInBrowser } from "./browserScanner";
 import type {
   CleanedImageFile,
+  CleanedPdfFile,
   ImageSession,
   ImageRedactionDecision,
+  PdfManualRegion,
+  PdfPagePreview,
+  PdfSession,
   SanitizeRequest,
   SanitizeResult,
   ScanOptions,
@@ -70,5 +74,42 @@ export async function cleanImageFile(
   return invoke<CleanedImageFile | null>("clean_image_file", {
     sessionId,
     decisions,
+  });
+}
+
+export async function pickPdf(): Promise<PdfSession | null> {
+  if (!isDesktop()) {
+    throw new Error("PDF safety copies are available in the ShareGate desktop app.");
+  }
+  return invoke<PdfSession | null>("pick_pdf");
+}
+
+export async function getPdfPagePreview(
+  sessionId: string,
+  pageIndex: number,
+): Promise<PdfPagePreview> {
+  if (!isDesktop()) {
+    throw new Error("PDF page review is available in the ShareGate desktop app.");
+  }
+  return invoke<PdfPagePreview>("get_pdf_page_preview", { sessionId, pageIndex });
+}
+
+export async function clearPdfSession(): Promise<void> {
+  if (!isDesktop()) return;
+  return invoke<void>("clear_pdf_session");
+}
+
+export async function cleanPdfFile(
+  sessionId: string,
+  decisions: ImageRedactionDecision[],
+  manualRegions: PdfManualRegion[],
+): Promise<CleanedPdfFile | null> {
+  if (!isDesktop()) {
+    throw new Error("PDF safety copies are available in the ShareGate desktop app.");
+  }
+  return invoke<CleanedPdfFile | null>("clean_pdf_file", {
+    sessionId,
+    decisions,
+    manualRegions,
   });
 }
