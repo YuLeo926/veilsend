@@ -2639,6 +2639,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "pdf-writer"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f5e456864a7a304047bff84977dc6fb162bd956475d40ba50b2dcecaada7f753"
+dependencies = [
+ "bitflags 2.13.1",
+ "itoa",
+ "memchr",
+ "ryu",
+]
+
+[[package]]
 name = "percent-encoding"
 version = "2.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3461,11 +3473,13 @@ name = "sharegate-core"
 version = "0.1.0"
 dependencies = [
  "bytes",
+ "flate2",
  "hex",
  "image",
  "img-parts",
  "kamadak-exif",
  "once_cell",
+ "pdf-writer",
  "qrcode",
  "quircs",
  "regex",

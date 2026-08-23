@@ -22,4 +22,6 @@ pub enum ShareGateError {
         "This image relies on EXIF orientation {0}. Normalize its orientation before removing metadata so the clean copy does not appear rotated or mirrored."
     )]
     OrientationNeedsNormalization(u32),
+    #[error("The PDF could not be processed safely: {0}")]
+    InvalidPdf(String),
 }

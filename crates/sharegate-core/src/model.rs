@@ -406,3 +406,20 @@ pub struct ImageRedactionResult {
     pub redacted_regions: usize,
     pub exceptions: usize,
 }
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct NormalizedRect {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PdfManualRegion {
+    pub id: String,
+    pub page_index: usize,
+    pub rectangle: NormalizedRect,
+}
