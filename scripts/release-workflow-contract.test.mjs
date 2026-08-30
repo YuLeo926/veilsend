@@ -5,6 +5,7 @@ import test from "node:test";
 
 const root = resolve(import.meta.dirname, "..");
 const workflowPath = resolve(root, ".github", "workflows", "release.yml");
+const ciWorkflowPath = resolve(root, ".github", "workflows", "ci.yml");
 
 // Offline allowlist of verified commit objects. Do not substitute tag-object SHAs.
 const verifiedActionCommitPins = Object.freeze([
@@ -75,6 +76,29 @@ test("treats only an explicit GitHub API 404 as an absent release", () => {
   assert.match(guard, /\$statusCodes\[-1\] -eq 404/);
   assert.match(guard, /Unable to determine whether release exists/);
   assert.doesNotMatch(guard, /gh release view/);
+});
+
+test("enforces committed Cargo locks and the generated license bundle in every trusted gate", () => {
+  const ci = readFileSync(ciWorkflowPath, "utf8");
+  const release = readFileSync(workflowPath, "utf8");
+  const development = readFileSync(resolve(root, "docs", "development.md"), "utf8");
+  const licenseGenerator = readFileSync(resolve(root, "scripts", "generate-third-party-licenses.mjs"), "utf8");
+
+  for (const [name, workflow] of [["ordinary CI", ci], ["release", release]]) {
+    assert.match(workflow, /npm run check:licenses/, `${name} must reject a stale generated license bundle`);
+    assert.match(workflow, /cargo clippy --locked --workspace --all-targets --all-features -- -D warnings/);
+    assert.match(workflow, /cargo test --locked --workspace --all-features/);
+    assert.doesNotMatch(workflow, /cargo (?:clippy|test) --workspace/);
+  }
+
+  assert.match(release, /npm run tauri -- build -- --locked/);
+  assert.doesNotMatch(release, /run: npm run tauri build\s*(?:\r?\n|$)/);
+  assert.match(licenseGenerator, /"metadata", "--locked"/);
+
+  assert.match(development, /npm run check:licenses/);
+  assert.match(development, /cargo clippy --locked --workspace/);
+  assert.match(development, /cargo test --locked --workspace/);
+  assert.match(development, /npm run tauri -- build -- --locked/);
 });
 
 test("removes only the versioned portable staging child after the ZIP closes", () => {

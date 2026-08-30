@@ -90,16 +90,17 @@ jobs:
         shell: pwsh
         run: |
           npm run test:release
+          npm run check:licenses
           npm test
           npm run build
           cargo fmt --all -- --check
-          cargo clippy --workspace --all-targets --all-features -- -D warnings
-          cargo test --workspace --all-features
+          cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+          cargo test --locked --workspace --all-features
           npm audit --audit-level=high
           cargo install cargo-audit --version 0.22.2 --locked
           cargo audit
       - name: Build NSIS and portable executable
-        run: npm run tauri build
+        run: npm run tauri -- build -- --locked
       - name: Stage unsigned beta assets
         shell: pwsh
         run: ./scripts/stage-release.ps1 -Version $env:VEILSEND_VERSION -ArtifactsDirectory artifacts

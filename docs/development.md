@@ -6,16 +6,17 @@ Run these checks before committing changes:
 
 ```bash
 cargo fmt --all -- --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
+cargo clippy --locked --workspace --all-targets -- -D warnings
+cargo test --locked --workspace
 npm audit --audit-level=moderate
+npm run check:licenses
 npm test
 npm run build
-cargo check -p veilsend
+cargo check --locked -p veilsend
 cargo audit
 ```
 
-For the final offline executable, use `npm run tauri build -- --no-bundle`. A plain `cargo build --release` does not run the frontend build or enable Tauri's embedded custom protocol and may leave the executable pointing at the development server.
+For the final offline executable, use `npm run tauri -- build --no-bundle -- --locked`. A plain `cargo build --release` does not run the frontend build or enable Tauri's embedded custom protocol and may leave the executable pointing at the development server. The separator before `--locked` passes that flag to Tauri's Cargo runner; `npm run tauri build -- --locked` is not equivalent and this Tauri CLI rejects it as an unknown top-level option.
 
 The last check compiles the Windows desktop shell and therefore requires local endpoint security to allow Cargo-generated build scripts. Do not disable endpoint security automatically. If an organization blocks `target/**/build-script-build.exe`, ask its administrator to approve the Rust/Tauri build workflow or build in an approved development environment.
 
@@ -28,15 +29,18 @@ Pull requests and pushes to `master` run the read-only `quality / windows` workf
 ```bash
 npm ci
 npm run test:release
+npm run check:licenses
 npm test
 npm run build
 cargo fmt --all -- --check
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace --all-features
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+cargo test --locked --workspace --all-features
 npm audit --audit-level=high
 cargo install cargo-audit --version 0.22.2 --locked
 cargo audit
 ```
+
+All dependency-resolving Cargo commands use the committed lockfile and fail instead of updating dependency resolution. `npm run check:licenses` is offline and internally runs `cargo metadata --locked` before comparing the generated production license bundle. `cargo fmt` does not resolve dependencies, so `--locked` does not apply to it.
 
 The hosted job produces no artifacts, releases, attestations, or write permissions. Detector-dependent ignored tests for Windows OCR, face detection, and PDF acceptance remain part of controlled Windows acceptance rather than an ordinary hosted quality pass.
 
@@ -52,7 +56,8 @@ To validate the release asset contract locally without pushing a tag or creating
 
 ```powershell
 npm run test:release
-npm run tauri build
+npm run check:licenses
+npm run tauri -- build -- --locked
 pwsh -NoProfile -File scripts/stage-release.ps1 -Version 0.2.0-beta.1 -ArtifactsDirectory artifacts
 ```
 

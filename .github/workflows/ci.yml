@@ -31,6 +31,8 @@ jobs:
         run: npm ci
       - name: Release contract
         run: npm run test:release
+      - name: License bundle contract
+        run: npm run check:licenses
       - name: Frontend tests
         run: npm test
       - name: Frontend build
@@ -38,9 +40,9 @@ jobs:
       - name: Rust format
         run: cargo fmt --all -- --check
       - name: Rust lint
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+        run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
       - name: Rust tests
-        run: cargo test --workspace --all-features
+        run: cargo test --locked --workspace --all-features
       - name: npm vulnerability gate
         run: npm audit --audit-level=high
       - name: Install RustSec audit
