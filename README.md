@@ -82,6 +82,19 @@ For the desktop app:
 npm run tauri dev
 ```
 
+## Download the Windows beta
+
+Official binaries are published only through the project's GitHub Releases. VeilSend 0.2.0-beta.1 is an **unsigned pre-release**: SmartScreen may warn before its first run. Download either `VeilSend_0.2.0-beta.1_x64-setup-UNSIGNED.exe` for the current-user installer or `VeilSend_0.2.0-beta.1_x64-portable-UNSIGNED.zip` for the portable app, together with `SHA256SUMS.txt` from the same Release.
+
+Verify the downloaded filename and SHA-256 before running it:
+
+```powershell
+Get-FileHash -Algorithm SHA256 .\VeilSend_0.2.0-beta.1_x64-setup-UNSIGNED.exe
+Get-Content .\SHA256SUMS.txt
+```
+
+The displayed hash must exactly match the entry in `SHA256SUMS.txt`. The installer is current-user only and may use Microsoft's WebView2 bootstrapper if that Windows runtime is unavailable. After installation, scanning, redaction, verification, and saving work offline; VeilSend has no updater, analytics, crash uploads, or background service. Read [the beta release notes](RELEASE_NOTES.md) before installing.
+
 Use **Try safe sample** in text mode. Image mode opens local JPEG and PNG files through the native file picker or accepts a bitmap from the focused Windows clipboard. PDF mode opens `fixtures/pdf-sensitive-sample.pdf` for the bounded three-page acceptance flow. All repository fixtures are synthetic.
 
 ## Verify the project
