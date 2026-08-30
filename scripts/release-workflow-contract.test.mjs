@@ -82,6 +82,7 @@ test("enforces committed Cargo locks and the generated license bundle in every t
   const ci = readFileSync(ciWorkflowPath, "utf8");
   const release = readFileSync(workflowPath, "utf8");
   const development = readFileSync(resolve(root, "docs", "development.md"), "utf8");
+  const readme = readFileSync(resolve(root, "README.md"), "utf8");
   const licenseGenerator = readFileSync(resolve(root, "scripts", "generate-third-party-licenses.mjs"), "utf8");
 
   for (const [name, workflow] of [["ordinary CI", ci], ["release", release]]) {
@@ -99,6 +100,16 @@ test("enforces committed Cargo locks and the generated license bundle in every t
   assert.match(development, /cargo clippy --locked --workspace/);
   assert.match(development, /cargo test --locked --workspace/);
   assert.match(development, /npm run tauri -- build -- --locked/);
+
+  assert.match(readme, /npm run check:licenses/);
+  assert.match(readme, /cargo clippy --locked --workspace --all-targets -- -D warnings/);
+  assert.match(readme, /cargo test --locked --workspace/);
+  assert.match(readme, /cargo check --locked -p veilsend/);
+  assert.match(readme, /npm run tauri -- build --no-bundle -- --locked/);
+  assert.doesNotMatch(readme, /cargo (?:clippy|test) --workspace/);
+  assert.doesNotMatch(readme, /cargo check -p veilsend/);
+  assert.doesNotMatch(readme, /npm run tauri build -- --no-bundle/);
+  assert.doesNotMatch(readme, /cargo fmt --locked/);
 });
 
 test("removes only the versioned portable staging child after the ZIP closes", () => {

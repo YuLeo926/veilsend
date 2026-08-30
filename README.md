@@ -100,20 +100,23 @@ Use **Try safe sample** in text mode. Image mode opens local JPEG and PNG files 
 ## Verify the project
 
 ```bash
-cargo test --workspace
+cargo test --locked --workspace
 npm audit --audit-level=moderate
+npm run check:licenses
 npm test
 npm run build
-cargo clippy --workspace --all-targets -- -D warnings
-cargo check -p veilsend
+cargo clippy --locked --workspace --all-targets -- -D warnings
+cargo check --locked -p veilsend
 cargo audit
 ```
 
 Build the offline executable through Tauri so the frontend is embedded rather than pointing at the development server:
 
 ```bash
-npm run tauri build -- --no-bundle
+npm run tauri -- build --no-bundle -- --locked
 ```
+
+The locked Cargo commands fail rather than updating dependency resolution. The separator before `--locked` passes it to Tauri's Cargo runner; keep `--no-bundle` before that separator because it is a Tauri option.
 
 ## Privacy model
 
