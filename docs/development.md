@@ -40,7 +40,7 @@ cargo install cargo-audit --version 0.22.2 --locked
 cargo audit
 ```
 
-All dependency-resolving Cargo commands use the committed lockfile and fail instead of updating dependency resolution. `npm run check:licenses` is offline and internally runs `cargo metadata --locked` before comparing the generated production license bundle. `cargo fmt` does not resolve dependencies, so `--locked` does not apply to it.
+All dependency-resolving Cargo commands use the committed lockfile and fail instead of updating dependency resolution. `npm run check:licenses` is reproducible from the committed lockfiles; on a first or clean environment Cargo may fetch the locked crate sources before `cargo metadata --locked` can compare the generated production license bundle. `cargo fmt` does not resolve dependencies, so `--locked` does not apply to it.
 
 The hosted job produces no artifacts, releases, attestations, or write permissions. Detector-dependent ignored tests for Windows OCR, face detection, and PDF acceptance remain part of controlled Windows acceptance rather than an ordinary hosted quality pass.
 

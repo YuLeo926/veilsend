@@ -104,6 +104,9 @@ jobs:
       - name: Stage unsigned beta assets
         shell: pwsh
         run: ./scripts/stage-release.ps1 -Version $env:VEILSEND_VERSION -ArtifactsDirectory artifacts
+      - name: Verify installed NSIS notice bundle
+        shell: pwsh
+        run: ./scripts/verify-installed-notice.ps1 -InstallerPath (Join-Path artifacts $env:VEILSEND_INSTALLER_NAME) -ExpectedNoticePath THIRD_PARTY_LICENSES.md -InstallDirectory (Join-Path $env:RUNNER_TEMP "veilsend-notice-install-$env:GITHUB_RUN_ID")
       - name: Generate CycloneDX SBOM
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
         with:
