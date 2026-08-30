@@ -40,6 +40,24 @@ cargo audit
 
 The hosted job produces no artifacts, releases, attestations, or write permissions. Detector-dependent ignored tests for Windows OCR, face detection, and PDF acceptance remain part of controlled Windows acceptance rather than an ordinary hosted quality pass.
 
+## Draft beta release workflow
+
+Pushing the exact `v0.2.0-beta.1` tag starts the release-only `release / windows-beta` workflow. The workflow rejects every other `v*` tag through the repository release contract, repeats all hosted quality gates, builds the current-user NSIS installer and portable executable once, and stages the exact asset names exported by `scripts/release-contract.mjs`.
+
+The job generates a CycloneDX JSON SBOM and `SHA256SUMS.txt`, verifies the complete four-file asset set and every checksum, uploads the `veilsend-v0.2.0-beta.1-release-assets` review artifact, and creates GitHub build-provenance attestations. It then creates a **draft pre-release** using `RELEASE_NOTES.md`; it never publishes the Release. If that tag already has a Release, including a draft, the job stops. A maintainer must inspect and explicitly delete a failed draft before retrying, so a rerun cannot silently replace assets.
+
+Release permissions (`contents: write`, `id-token: write`, and `attestations: write`) exist only in this tag-triggered workflow. Pull requests and ordinary branch pushes cannot invoke it and remain covered by the read-only hosted quality job. All third-party Actions are pinned to full commit SHAs.
+
+To validate the release asset contract locally without pushing a tag or creating a GitHub Release, run:
+
+```powershell
+npm run test:release
+npm run tauri build
+pwsh -NoProfile -File scripts/stage-release.ps1 -Version 0.2.0-beta.1 -ArtifactsDirectory artifacts
+```
+
+After generating `artifacts/veilsend-0.2.0-beta.1-sbom.cdx.json` with the pinned workflow action, the workflow hashes the installer, portable ZIP, and SBOM in filename order. The resulting `SHA256SUMS.txt` uses lowercase SHA-256 followed by two spaces and the asset filename, and the next step recalculates every digest before attestation and draft creation. Local validation must not push a tag, invoke the remote workflow, or call `gh release create`.
+
 ## Browser preview
 
 `npm run dev` provides a preview of the interface and uses the TypeScript base-rule adapter. It is useful for interface work but is not the production security boundary. The packaged Tauri application invokes `veilsend-core` in Rust.

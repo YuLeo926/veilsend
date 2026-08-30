@@ -36,3 +36,4 @@ Copy-Item -LiteralPath (Join-Path $workspace 'LICENSE') -Destination $portableRo
 Copy-Item -LiteralPath (Join-Path $workspace 'RELEASE_NOTES.md') -Destination $portableRoot
 Copy-Item -LiteralPath (Join-Path $workspace 'THIRD_PARTY_LICENSES.md') -Destination $portableRoot
 Compress-Archive -Path (Join-Path $portableRoot '*') -DestinationPath $portableDestination -CompressionLevel Optimal
+Remove-Item -LiteralPath $portableRoot -Recurse -Force
