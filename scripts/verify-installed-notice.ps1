@@ -22,15 +22,19 @@ function Get-VeilSendProductKey {
 function Test-UninstallEntryTargetsDirectory {
   param([object]$Entry, [string]$InstallDirectory)
   $target = [IO.Path]::GetFullPath($InstallDirectory).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
-  foreach ($candidate in @($Entry.InstallLocation, $Entry.UninstallString)) {
-    if ([string]::IsNullOrWhiteSpace([string]$candidate)) { continue }
-    $raw = ([string]$candidate).Trim()
-    $match = [regex]::Match($raw, '(?i)^\s*"?(?<path>[A-Za-z]:.*?\\uninstall\.exe)"?')
-    $path = if ($match.Success) { $match.Groups['path'].Value } else { $raw.Trim('"') }
-    if ($path -match '(?i)uninstall\.exe$') { $path = Split-Path -Parent $path }
-    try { if ([IO.Path]::GetFullPath($path).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar) -eq $target) { return $true } } catch { }
+  if (-not [string]::IsNullOrWhiteSpace([string]$Entry.InstallLocation)) {
+    try { if ([IO.Path]::GetFullPath([string]$Entry.InstallLocation).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar) -ieq $target) { return $true } } catch { }
   }
-  return $false
+  if ([string]::IsNullOrWhiteSpace([string]$Entry.UninstallString)) { return $false }
+  $raw = ([string]$Entry.UninstallString).Trim()
+  # Parse only the first executable token. Quoted commands may have parameters;
+  # unquoted commands may not have a whitespace-containing executable path.
+  $match = if ($raw.StartsWith('"')) { [regex]::Match($raw, '^"(?<path>[^"\r\n]+)"(?<args>\s+.*)?$') } else { [regex]::Match($raw, '^(?<path>[^\s"\r\n]+)(?<args>\s+.*)?$') }
+  if (-not $match.Success) { return $false }
+  try {
+    $targetExe = Join-Path $target 'uninstall.exe'
+    return ([IO.Path]::GetFullPath($match.Groups['path'].Value) -ieq $targetExe)
+  } catch { return $false }
 }
 
 function Invoke-VeilSendNoticeVerification {

@@ -9,6 +9,26 @@ if (-not (Get-Command Invoke-VeilSendNoticeVerification -ErrorAction SilentlyCon
   throw 'Invoke-VeilSendNoticeVerification was not exported by the verifier.'
 }
 
+function Test-UninstallCommandParsing {
+  $install = 'C:\Temp\veil-test'
+  foreach ($command in @(
+    'C:\Temp\veil-test\uninstall.exe /S',
+    '"C:\Temp\veil-test\uninstall.exe" /S'
+  )) {
+    if (-not (Test-UninstallEntryTargetsDirectory -Entry ([pscustomobject]@{ InstallLocation = $null; UninstallString = $command }) -InstallDirectory $install)) { throw "Rejected valid uninstall command: $command" }
+  }
+  foreach ($command in @(
+    'C:\Temp\veil-test\uninstall.exe.evil',
+    '"C:\Temp\veil-test\uninstall.exe.evil" /S',
+    'prefix C:\Temp\veil-test\uninstall.exe',
+    '"C:\Temp\veil-test\uninstall.exe /S'
+  )) {
+    if (Test-UninstallEntryTargetsDirectory -Entry ([pscustomobject]@{ InstallLocation = $null; UninstallString = $command }) -InstallDirectory $install) { throw "Accepted unsafe uninstall command: $command" }
+  }
+}
+
+Test-UninstallCommandParsing
+
 function Invoke-FailureCase([string]$mode) {
   $root = Join-Path ([IO.Path]::GetTempPath()) ("veilsend-verifier-test-" + [guid]::NewGuid())
   $install = Join-Path $root 'install'
@@ -31,7 +51,7 @@ function Invoke-FailureCase([string]$mode) {
         # The generated uninstall key intentionally has no DisplayName: it models
         # NSIS failing between creating the key and writing Add/Remove metadata.
         $entries.Add([pscustomobject]@{ PSPath = 'generated-partial'; InstallLocation = $install; UninstallString = (Join-Path $install 'uninstall.exe') })
-        $entries.Add([pscustomobject]@{ PSPath = 'unrelated'; InstallLocation = (Join-Path $root 'other'); UninstallString = (Join-Path $root 'other\uninstall.exe') })
+        $entries.Add([pscustomobject]@{ PSPath = 'unrelated'; InstallLocation = $null; UninstallString = ('"' + (Join-Path $install 'uninstall.exe.evil') + '" /S') })
         $script:productKey = [pscustomobject]@{ '(default)' = $install }
         return [pscustomobject]@{ ExitCode = $(if ($mode -eq 'installer-nonzero') { 17 } else { 0 }) }
       }
@@ -50,6 +70,7 @@ function Invoke-FailureCase([string]$mode) {
     try { Invoke-VeilSendNoticeVerification -InstallerPath $installer -ExpectedNoticePath $expected -InstallDirectory $install -StartMenuDirectory $startMenu -Dependencies $deps } catch { $threw = $true; $message = $_.Exception.Message }
     if (-not $threw) { throw 'Expected notice mismatch to fail verification.' }
     if ($message -notmatch 'SHA-256 mismatch') { throw "Expected aggregated notice error, got: $message" }
+    if ($message -notmatch 'Unexpected new uninstall entry was not removed: unrelated') { throw 'Unsafe unrelated uninstall key was not reported as pollution.' }
     if ($mode -eq 'installer-nonzero' -and $message -notmatch 'Installer failed with exit code 17') { throw 'Installer partial failure was not reported.' }
     if ($mode -eq 'throw' -and $message -notmatch 'stub uninstaller launch failure') { throw 'Uninstaller launch failure was not reported.' }
     if ($mode -eq 'nonzero' -and $message -notmatch 'Uninstaller failed with exit code 9') { throw 'Uninstaller non-zero failure was not reported.' }
@@ -71,10 +92,10 @@ function Test-ExistingProductKeyIsProtected {
   New-Item -ItemType Directory -Path $root | Out-Null
   $installer = Join-Path $root 'installer.exe'; $expected = Join-Path $root 'expected.md'; $install = Join-Path $root 'install'
   [IO.File]::WriteAllText($installer, 'stub'); [IO.File]::WriteAllText($expected, 'expected')
-  $started = $false; $existing = [pscustomobject]@{ '(default)' = (Join-Path $root 'real-install') }
+  $script:started = $false; $existing = [pscustomobject]@{ '(default)' = (Join-Path $root 'real-install') }
   try {
     try { Invoke-VeilSendNoticeVerification -InstallerPath $installer -ExpectedNoticePath $expected -InstallDirectory $install -StartMenuDirectory (Join-Path $root 'start-menu') -Dependencies @{ StartProcess = { $script:started = $true }; GetUninstallEntries = { @() }; GetProductKey = { $existing }; RemoveProductKey = { throw 'must not remove pre-existing key' } }; throw 'Expected product-key preflight rejection.' } catch { if ($_.Exception.Message -notmatch 'product key already exists') { throw } }
-    if ($started) { throw 'Verifier launched an installer despite a pre-existing product key.' }
+    if ($script:started) { throw 'Verifier launched an installer despite a pre-existing product key.' }
   } finally { if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force } }
 }
 
