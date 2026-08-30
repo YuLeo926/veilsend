@@ -100,6 +100,12 @@ test("enforces committed Cargo locks and the generated license bundle in every t
   assert.match(development, /cargo clippy --locked --workspace/);
   assert.match(development, /cargo test --locked --workspace/);
   assert.match(development, /npm run tauri -- build -- --locked/);
+  const developmentCargoResolutionExamples = development.match(/^cargo (?:test|check|clippy)\b.*$/gm) ?? [];
+  assert.ok(developmentCargoResolutionExamples.length >= 8, "development guide must retain all Cargo gate and detector examples");
+  for (const command of developmentCargoResolutionExamples) {
+    assert.match(command, /^cargo (?:test|check|clippy) --locked\b/, `unlocked development command: ${command}`);
+  }
+  assert.doesNotMatch(development, /^cargo (?:fmt|audit) --locked\b/gm);
 
   assert.match(readme, /npm run check:licenses/);
   assert.match(readme, /cargo clippy --locked --workspace --all-targets -- -D warnings/);

@@ -108,21 +108,21 @@ cargo run -p veilsend-core --example make_metadata_fixture -- output/veilsend-me
 `fixtures/ocr-sensitive-sample.png` contains only reserved example data. The ignored Windows adapter test exercises the installed OCR language pack and expects email, private-IP, and assigned-secret detections:
 
 ```bash
-cargo test -p veilsend windows_ocr::tests::recognizes_the_synthetic_acceptance_fixture -- --ignored
+cargo test --locked -p veilsend windows_ocr::tests::recognizes_the_synthetic_acceptance_fixture -- --ignored
 ```
 
 `fixtures/qr-sensitive-sample.png` contains a synthetic link under the reserved `example.com` domain. Regenerate it and run the QR core acceptance tests with:
 
 ```bash
 cargo run -p veilsend-core --example make_qr_fixture
-cargo test -p veilsend-core qr::tests
+cargo test --locked -p veilsend-core qr::tests
 ```
 
 `fixtures/barcode-sensitive-sample.png` contains three reserved synthetic values: `SGTEST-000001`, the test EAN-13 value `5901234123457`, and the test UPC-A value `036000291452`. Regeneration is deterministic:
 
 ```bash
 cargo run -p veilsend-core --example make_barcode_fixture
-cargo test -p veilsend-core barcode::tests
+cargo test --locked -p veilsend-core barcode::tests
 ```
 
 `fixtures/synthetic-face-source.png` is a clearly synthetic 3D clay mannequin generated on 2026-08-19 with OpenAI's built-in image generation tool. It represents no real person and contains no private data. Its SHA-256 is `c243801fda58b63cc987ba19ab9c51a67fe452b4eab6804ef28cd0d1442f6abe`. The generation prompt requested one fictional, front-facing, non-photorealistic terracotta mannequin on a plain warm background, with no text, numbers, logos, watermark, jewelry, patterned clothing, real-person photography, or celebrity resemblance.
@@ -132,7 +132,7 @@ The deterministic compositor places the barcode fixture beside that portrait:
 ```bash
 cargo run -p veilsend-core --example make_barcode_fixture
 cargo run -p veilsend-core --example make_visual_fixture
-cargo test -p veilsend windows_faces::tests::recognizes_the_synthetic_acceptance_fixture -- --ignored
+cargo test --locked -p veilsend windows_faces::tests::recognizes_the_synthetic_acceptance_fixture -- --ignored
 ```
 
 The resulting `fixtures/visual-sensitive-sample.png` is the packaged clipboard acceptance fixture. Copy it to the Windows clipboard, open image mode, press `Ctrl+V`, confirm one face and three barcode findings without payload content, redact all, save a separate PNG, and require all five saved-file checks to complete with zero unexpected findings. Confirm the fixture hash is unchanged and that no temporary source image was created.
@@ -158,7 +158,7 @@ Expected SHA-256 values:
 Run the complete object-removal, page-rendering, redaction, and saved-page verification test:
 
 ```bash
-cargo test -p veilsend pdf_pipeline::tests::fixture_reconstruction_omits_hidden_and_active_source_objects -- --nocapture
+cargo test --locked -p veilsend pdf_pipeline::tests::fixture_reconstruction_omits_hidden_and_active_source_objects -- --nocapture
 ```
 
 For manual packaged acceptance, choose the fixture in PDF mode, confirm the expected counts, add a cover around the page 3 marker, keep no automatic finding, save a separate `.redacted.pdf`, and require all pages and detectors to pass. Render source and final pages only under `tmp/pdfs/`, remove those temporary renders after inspection, and keep the final PDF under `output/pdf/`. Confirm the source hash remains unchanged and the output bytes contain none of `SG_PDF_SOURCE_MARKER`, `SG_PDF_INVISIBLE_MARKER`, `SG_PDF_METADATA_MARKER`, `SG_PDF_JAVASCRIPT_MARKER`, `SG_PDF_FORM_MARKER`, `SG_PDF_ATTACHMENT_MARKER`, or `SG_PDF_ANNOTATION_MARKER`.
