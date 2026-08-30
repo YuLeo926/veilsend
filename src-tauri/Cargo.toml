@@ -1,6 +1,6 @@
 [package]
 name = "veilsend"
-version = "0.1.0"
+version = "0.2.0-beta.1"
 description = "Scan sensitive information before it leaves your computer"
 authors = ["VeilSend contributors"]
 edition = "2024"
