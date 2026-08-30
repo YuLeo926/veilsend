@@ -21,6 +21,25 @@ The last check compiles the Windows desktop shell and therefore requires local e
 
 `cargo audit` currently exits successfully with no vulnerability advisories. It also reports maintenance warnings for GTK3-era crates retained in Tauri's cross-platform dependency graph; the Windows target does not compile or link those Linux GTK dependencies. Re-evaluate the warnings before shipping a Linux build.
 
+## Hosted quality gate
+
+Pull requests and pushes to `master` run the read-only `quality / windows` workflow on `windows-2025`. The workflow uses the committed npm and Cargo lockfiles and runs this sequence:
+
+```bash
+npm ci
+npm run test:release
+npm test
+npm run build
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace --all-features
+npm audit --audit-level=high
+cargo install cargo-audit --version 0.22.2 --locked
+cargo audit
+```
+
+The hosted job produces no artifacts, releases, attestations, or write permissions. Detector-dependent ignored tests for Windows OCR, face detection, and PDF acceptance remain part of controlled Windows acceptance rather than an ordinary hosted quality pass.
+
 ## Browser preview
 
 `npm run dev` provides a preview of the interface and uses the TypeScript base-rule adapter. It is useful for interface work but is not the production security boundary. The packaged Tauri application invokes `veilsend-core` in Rust.
