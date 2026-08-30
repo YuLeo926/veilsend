@@ -43,6 +43,9 @@ test("documents and stages the unsigned beta assets", () => {
   assert.match(licenses, /MIT License/);
   assert.match(licenses, /Apache License/);
   assert.match(licenses, /BSD 2-Clause License/);
+  assert.match(licenses, /\| qrcode \| MIT OR Apache-2\.0 \|/);
+  assert.match(licenses, /ISC License/);
+  assert.match(licenses, /Copyright \(c\) for portions of Lucide are held by Cole Bemis 2013-2022 as part\s+of Feather \(MIT\)\. All other copyright \(c\) for Lucide are held by Lucide\s+Contributors 2022\./);
 
   const readme = readFileSync(resolve(root, "README.md"), "utf8");
   assert.match(readme, /unsigned pre-release/i);
