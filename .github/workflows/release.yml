@@ -44,6 +44,41 @@ jobs:
           Add-Content -LiteralPath $env:GITHUB_ENV -Value "VEILSEND_CHECKSUMS_NAME=$($assetNames.checksums)"
           Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "version=$version"
           Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "sbom=$($assetNames.sbom)"
+      - name: Refuse an existing release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $previousNativeErrorPreference = $PSNativeCommandUseErrorActionPreference
+          try {
+            $PSNativeCommandUseErrorActionPreference = $false
+            $apiOutput = @(gh api --include --method GET "repos/$env:GITHUB_REPOSITORY/releases/tags/$env:GITHUB_REF_NAME" 2>&1)
+            $apiExitCode = $LASTEXITCODE
+          } finally {
+            $PSNativeCommandUseErrorActionPreference = $previousNativeErrorPreference
+          }
+
+          if ($apiExitCode -eq 0) {
+            throw "Release already exists; inspect and explicitly remove a failed draft before retrying."
+          }
+
+          $statusCodes = @(
+            foreach ($line in $apiOutput) {
+              $text = [string]$line
+              if ($text -match '^HTTP/\S+\s+(?<status>\d{3})\b') {
+                [int]$Matches.status
+              } elseif ($text -match '\(HTTP (?<status>\d{3})\)\s*$') {
+                [int]$Matches.status
+              }
+            }
+          )
+          if ($statusCodes.Count -gt 0 -and $statusCodes[-1] -eq 404) {
+            Write-Output 'No existing release found for this tag.'
+            exit 0
+          }
+
+          $status = if ($statusCodes.Count -gt 0) { $statusCodes[-1] } else { 'unknown' }
+          throw "Unable to determine whether release exists (gh exit $apiExitCode; HTTP $status)."
       - name: Install Rust toolchain
         shell: pwsh
         run: |
@@ -51,14 +86,6 @@ jobs:
           rustup default stable
       - name: Install dependencies
         run: npm ci
-      - name: Refuse an existing release
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          $existing = gh release view $env:GITHUB_REF_NAME --json isDraft 2>$null | ConvertFrom-Json
-          if ($existing) { throw "Release already exists; inspect and explicitly remove a failed draft before retrying." }
-          exit 0
       - name: Run release gates
         shell: pwsh
         run: |
@@ -83,6 +110,8 @@ jobs:
           format: cyclonedx-json
           output-file: artifacts/${{ steps.contract.outputs.sbom }}
           upload-artifact: false
+          upload-release-assets: false
+          github-token: ""
       - name: Generate SHA-256 file
         shell: pwsh
         run: |
@@ -128,7 +157,7 @@ jobs:
           path: artifacts/*
           if-no-files-found: error
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@8beda2b7ed98355c0e97c0a63bec38ae472e66c4 # v4
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
         with:
           subject-path: artifacts/*
       - name: Create draft pre-release

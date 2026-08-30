@@ -6,6 +6,15 @@ import test from "node:test";
 const root = resolve(import.meta.dirname, "..");
 const workflowPath = resolve(root, ".github", "workflows", "release.yml");
 
+// Offline allowlist of verified commit objects. Do not substitute tag-object SHAs.
+const verifiedActionCommitPins = Object.freeze([
+  "actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803",
+  "actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38",
+  "anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610",
+  "actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4",
+  "actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8",
+]);
+
 test("limits release writes to version tags and pins every third-party action", () => {
   assert.equal(existsSync(workflowPath), true, "release workflow must exist");
   const workflow = readFileSync(workflowPath, "utf8");
@@ -24,14 +33,8 @@ test("limits release writes to version tags and pins every third-party action", 
   assert.equal(tokenBindings.length, 2, "only the two gh CLI steps may receive GH_TOKEN");
 
   const actionRefs = [...workflow.matchAll(/^\s+(?:- )?uses: ([^\s]+)(?:\s+#.*)?$/gm)].map((match) => match[1]);
-  assert.deepEqual(actionRefs, [
-    "actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803",
-    "actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38",
-    "anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610",
-    "actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4",
-    "actions/attest-build-provenance@8beda2b7ed98355c0e97c0a63bec38ae472e66c4",
-  ]);
-  assert.ok(actionRefs.every((ref) => /@[0-9a-f]{40}$/.test(ref)));
+  assert.deepEqual(actionRefs, verifiedActionCommitPins);
+  assert.doesNotMatch(workflow, /actions\/attest-build-provenance@8beda2b7ed98355c0e97c0a63bec38ae472e66c4/);
 });
 
 test("derives exact assets from the release contract and creates only a draft prerelease", () => {
@@ -44,6 +47,9 @@ test("derives exact assets from the release contract and creates only a draft pr
   assert.match(workflow, /Stage unsigned beta assets/);
   assert.match(workflow, /Generate CycloneDX SBOM/);
   assert.match(workflow, /format: cyclonedx-json/);
+  const sbomStep = workflow.slice(workflow.indexOf("Generate CycloneDX SBOM"), workflow.indexOf("Generate SHA-256 file"));
+  assert.match(sbomStep, /upload-release-assets: false/);
+  assert.match(sbomStep, /github-token: ""/);
   assert.match(workflow, /Generate SHA-256 file/);
   assert.match(workflow, /Malformed checksum line/);
   assert.match(workflow, /Checksum mismatch/);
@@ -53,6 +59,22 @@ test("derives exact assets from the release contract and creates only a draft pr
   assert.match(workflow, /Attest build provenance/);
   assert.match(workflow, /gh release create[\s\S]*--draft[\s\S]*--prerelease[\s\S]*--verify-tag/);
   assert.match(workflow, /--notes-file RELEASE_NOTES\.md/);
+});
+
+test("treats only an explicit GitHub API 404 as an absent release", () => {
+  const workflow = readFileSync(workflowPath, "utf8");
+  const guardStart = workflow.indexOf("Refuse an existing release");
+  const guardEnd = workflow.indexOf("Install Rust toolchain");
+  const guard = workflow.slice(guardStart, guardEnd);
+
+  assert.ok(guardStart >= 0 && guardEnd > guardStart, "release guard must run before toolchain and dependency installation");
+  assert.match(guard, /gh api --include/);
+  assert.match(guard, /repos\/\$env:GITHUB_REPOSITORY\/releases\/tags\/\$env:GITHUB_REF_NAME/);
+  assert.match(guard, /\$apiExitCode = \$LASTEXITCODE/);
+  assert.match(guard, /\$apiExitCode -eq 0/);
+  assert.match(guard, /\$statusCodes\[-1\] -eq 404/);
+  assert.match(guard, /Unable to determine whether release exists/);
+  assert.doesNotMatch(guard, /gh release view/);
 });
 
 test("removes only the versioned portable staging child after the ZIP closes", () => {
