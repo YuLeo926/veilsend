@@ -10,6 +10,7 @@ test("enables only the current-user NSIS beta bundle surface", () => {
   assert.deepEqual(config.bundle, {
     active: true,
     targets: ["nsis"],
+    resources: ["../THIRD_PARTY_LICENSES.md"],
     icon: ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.ico"],
     windows: {
       webviewInstallMode: { type: "downloadBootstrapper", silent: true },
@@ -39,11 +40,10 @@ test("documents and stages the unsigned beta assets", () => {
   assert.match(notes, /offline/i);
 
   const licenses = readFileSync(resolve(root, "THIRD_PARTY_LICENSES.md"), "utf8");
-  assert.match(licenses, /CycloneDX SBOM is authoritative/i);
+  assert.match(licenses, /CycloneDX SBOM remains the release inventory/i);
   assert.match(licenses, /MIT License/);
   assert.match(licenses, /Apache License/);
-  assert.match(licenses, /BSD 2-Clause License/);
-  assert.match(licenses, /\| qrcode \| MIT OR Apache-2\.0 \|/);
+  assert.match(licenses, /Copyright \(c\) 2016-2023 KAMADA Ken'ichi\./);
   assert.match(licenses, /ISC License/);
   assert.match(licenses, /Copyright \(c\) for portions of Lucide are held by Cole Bemis 2013-2022 as part\s+of Feather \(MIT\)\. All other copyright \(c\) for Lucide are held by Lucide\s+Contributors 2022\./);
 

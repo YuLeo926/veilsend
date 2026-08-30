@@ -10,6 +10,7 @@
     "test": "vitest run --exclude scripts/*.test.mjs",
     "test:release": "node --test scripts/*.test.mjs",
     "check:release": "node scripts/release-contract.mjs",
+    "check:licenses": "node scripts/generate-third-party-licenses.mjs --check",
     "test:watch": "vitest",
     "tauri": "tauri"
   },
