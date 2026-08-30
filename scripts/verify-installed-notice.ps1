@@ -10,9 +10,13 @@ $ErrorActionPreference = 'Stop'
 function Get-VeilSendUninstallEntries {
   @(
     Get-ChildItem -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall' -ErrorAction SilentlyContinue |
-      ForEach-Object { Get-ItemProperty -LiteralPath $_.PSPath } |
-      Where-Object { $_.DisplayName -like 'VeilSend*' }
+      ForEach-Object { Get-ItemProperty -LiteralPath $_.PSPath }
   )
+}
+
+function Get-VeilSendProductKey {
+  $path = 'HKCU:\Software\veilsend\VeilSend'
+  if (Test-Path -LiteralPath $path) { Get-ItemProperty -LiteralPath $path }
 }
 
 function Test-UninstallEntryTargetsDirectory {
@@ -40,6 +44,8 @@ function Invoke-VeilSendNoticeVerification {
   $startProcess = if ($Dependencies.ContainsKey('StartProcess')) { $Dependencies.StartProcess } else { { param($file, $arguments) Start-Process -FilePath $file -ArgumentList $arguments -Wait -PassThru -WindowStyle Hidden } }
   $getEntries = if ($Dependencies.ContainsKey('GetUninstallEntries')) { $Dependencies.GetUninstallEntries } else { ${function:Get-VeilSendUninstallEntries} }
   $removeEntry = if ($Dependencies.ContainsKey('RemoveUninstallEntry')) { $Dependencies.RemoveUninstallEntry } else { { param($entry) Remove-Item -LiteralPath $entry.PSPath -Recurse -Force } }
+  $getProductKey = if ($Dependencies.ContainsKey('GetProductKey')) { $Dependencies.GetProductKey } else { ${function:Get-VeilSendProductKey} }
+  $removeProductKey = if ($Dependencies.ContainsKey('RemoveProductKey')) { $Dependencies.RemoveProductKey } else { { Remove-Item -LiteralPath 'HKCU:\Software\veilsend\VeilSend' -Recurse -Force } }
   $installer = (Resolve-Path -LiteralPath $InstallerPath).Path
   $expectedNotice = (Resolve-Path -LiteralPath $ExpectedNoticePath).Path
   $installDirectory = [IO.Path]::GetFullPath($InstallDirectory)
@@ -49,7 +55,8 @@ function Invoke-VeilSendNoticeVerification {
   if (Test-Path -LiteralPath $installDirectory) { throw "Refusing to use an existing install directory: $installDirectory" }
   if (Test-Path -LiteralPath $startMenuDirectory) { throw "Refusing to alter an existing VeilSend Start Menu directory: $startMenuDirectory" }
   $initialEntries = @(& $getEntries)
-  if ($initialEntries.Count -ne 0) { throw 'Refusing to run while a VeilSend current-user uninstall entry already exists.' }
+  $initialProductKey = & $getProductKey
+  if ($initialProductKey) { throw 'Refusing to run while a VeilSend current-user product key already exists.' }
   $initialEntryPaths = @($initialEntries | ForEach-Object { [string]$_.PSPath })
   $failures = [Collections.Generic.List[string]]::new(); $installAttempted = $false; $uninstaller = $null
   try {
@@ -66,7 +73,8 @@ function Invoke-VeilSendNoticeVerification {
   } finally {
     if ($installAttempted -and $null -ne $uninstaller -and (Test-Path -LiteralPath $uninstaller -PathType Leaf)) { try { $result = & $startProcess $uninstaller @('/S', "_?=$installDirectory"); if ($null -eq $result -or $result.ExitCode -ne 0) { throw "Uninstaller failed with exit code $($result.ExitCode)" } } catch { $failures.Add("Uninstaller: $($_.Exception.Message)") } }
     foreach ($directory in @($installDirectory, $startMenuDirectory)) { try { if (Test-Path -LiteralPath $directory) { Remove-Item -LiteralPath $directory -Recurse -Force } } catch { $failures.Add("Cleanup directory ${directory}: $($_.Exception.Message)") } }
-    try { $newEntries = @(& $getEntries | Where-Object { $initialEntryPaths -notcontains [string]$_.PSPath }); foreach ($entry in $newEntries) { if (Test-UninstallEntryTargetsDirectory -Entry $entry -InstallDirectory $installDirectory) { try { & $removeEntry $entry } catch { $failures.Add("Cleanup uninstall entry $($entry.PSPath): $($_.Exception.Message)") } } else { $failures.Add("Unexpected new VeilSend uninstall entry was not removed: $($entry.PSPath)") } }; $remaining = @(& $getEntries | Where-Object { $initialEntryPaths -notcontains [string]$_.PSPath }); if ($remaining.Count -ne 0) { $failures.Add('VeilSend current-user uninstall entry remained after cleanup.') } } catch { $failures.Add("Cleanup uninstall registry: $($_.Exception.Message)") }
+    try { $newEntries = @(& $getEntries | Where-Object { $initialEntryPaths -notcontains [string]$_.PSPath }); foreach ($entry in $newEntries) { if (Test-UninstallEntryTargetsDirectory -Entry $entry -InstallDirectory $installDirectory) { try { & $removeEntry $entry } catch { $failures.Add("Cleanup uninstall entry $($entry.PSPath): $($_.Exception.Message)") } } else { $failures.Add("Unexpected new uninstall entry was not removed: $($entry.PSPath)") } }; $remaining = @(& $getEntries | Where-Object { $initialEntryPaths -notcontains [string]$_.PSPath }); if ($remaining.Count -ne 0) { $failures.Add('New current-user uninstall entry remained after cleanup.') } } catch { $failures.Add("Cleanup uninstall registry: $($_.Exception.Message)") }
+    try { $productKey = & $getProductKey; if ($productKey) { $productEntry = [pscustomobject]@{ InstallLocation = $productKey.'(default)'; UninstallString = $null }; if (Test-UninstallEntryTargetsDirectory -Entry $productEntry -InstallDirectory $installDirectory) { try { & $removeProductKey } catch { $failures.Add("Cleanup VeilSend product key: $($_.Exception.Message)") } } else { $failures.Add('Unexpected VeilSend product key was not removed.') }; if (& $getProductKey) { $failures.Add('VeilSend current-user product key remained after cleanup.') } } } catch { $failures.Add("Cleanup VeilSend product key: $($_.Exception.Message)") }
   }
   if ($failures.Count -ne 0) { throw ($failures -join [Environment]::NewLine) }
 }

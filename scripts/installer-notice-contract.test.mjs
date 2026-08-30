@@ -18,6 +18,9 @@ test("verifies the final NSIS installation and cleans only its explicit temporar
   assert.match(script, /_\?=/);
   assert.match(script, /THIRD_PARTY_LICENSES\.md/);
   assert.match(script, /Remove-Item -LiteralPath \$directory -Recurse -Force/);
+  assert.match(script, /Get-VeilSendProductKey/);
+  assert.match(script, /current-user product key already exists/);
+  assert.doesNotMatch(script, /DisplayName -like 'VeilSend\*'/);
 
   const workflow = readFileSync(resolve(root, ".github", "workflows", "release.yml"), "utf8");
   const stageAt = workflow.indexOf("Stage unsigned beta assets");
