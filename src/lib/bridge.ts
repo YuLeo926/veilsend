@@ -8,6 +8,7 @@ import type {
   PdfManualRegion,
   PdfPagePreview,
   PdfSession,
+  RuntimeInfo,
   SanitizeRequest,
   SanitizeResult,
   ScanOptions,
@@ -21,6 +22,28 @@ declare global {
 }
 
 export const isDesktop = () => Boolean(window.__TAURI_INTERNALS__);
+
+export async function getRuntimeInfo(): Promise<RuntimeInfo> {
+  return isDesktop()
+    ? invoke<RuntimeInfo>("get_runtime_info")
+    : Promise.resolve({
+        appVersion: "0.2.0-beta.1",
+        channel: "browser-preview",
+        commit: "unverified",
+        verifiedBuild: false,
+        target: "browser",
+        osVersion: "browser",
+        license: "MIT",
+        detectors: {
+          text: "available",
+          metadata: "unavailable",
+          face: "unavailable",
+          qr: "unavailable",
+          barcode: "unavailable",
+          pdf: "unavailable",
+        },
+      });
+}
 
 export async function scanText(text: string, options: ScanOptions): Promise<ScanReport> {
   return isDesktop()

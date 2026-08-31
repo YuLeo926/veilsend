@@ -2,6 +2,19 @@ export type Severity = "low" | "medium" | "high" | "critical";
 export type Category = "credential" | "personal" | "network" | "localContext" | "custom";
 export type VerificationStatus = "verified" | "needsReview" | "cleanedWithExceptions";
 
+export type RuntimeCapability = "available" | "unavailable";
+
+export interface RuntimeInfo {
+  appVersion: string;
+  channel: string;
+  commit: string;
+  verifiedBuild: boolean;
+  target: string;
+  osVersion: string;
+  license: "MIT";
+  detectors: Record<"text" | "metadata" | "face" | "qr" | "barcode" | "pdf", RuntimeCapability>;
+}
+
 export interface ScanOptions {
   maxBytes: number;
   customTerms: string[];

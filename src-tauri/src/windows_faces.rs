@@ -12,6 +12,18 @@ pub enum FaceAdapterError {
 }
 
 #[cfg(target_os = "windows")]
+pub fn is_available() -> bool {
+    use windows::Media::FaceAnalysis::FaceDetector;
+
+    FaceDetector::IsSupported().unwrap_or(false)
+}
+
+#[cfg(not(target_os = "windows"))]
+pub const fn is_available() -> bool {
+    false
+}
+
+#[cfg(target_os = "windows")]
 pub fn detect(input: &[u8]) -> Result<Vec<ImageRect>, FaceAdapterError> {
     use windows::{
         Graphics::Imaging::{BitmapDecoder, BitmapPixelFormat, SoftwareBitmap},

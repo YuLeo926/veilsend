@@ -16,6 +16,7 @@ mod image_pipeline;
 mod image_sessions;
 mod pdf_pipeline;
 mod pdf_sessions;
+mod release_info;
 mod windows_clipboard;
 mod windows_faces;
 mod windows_ocr;
@@ -104,6 +105,11 @@ fn scan_text(text: String, options: ScanOptions) -> Result<ScanReport, VeilSendE
 #[tauri::command]
 fn sanitize_text(request: SanitizeRequest) -> Result<SanitizeResult, VeilSendError> {
     sanitize(request)
+}
+
+#[tauri::command]
+fn get_runtime_info() -> release_info::RuntimeInfo {
+    release_info::runtime_info()
 }
 
 #[tauri::command]
@@ -591,6 +597,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             scan_text,
             sanitize_text,
+            get_runtime_info,
             save_cleaned_text,
             pick_image,
             paste_image,

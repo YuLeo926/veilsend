@@ -13,6 +13,18 @@ pub enum OcrAdapterError {
 }
 
 #[cfg(target_os = "windows")]
+pub fn is_available() -> bool {
+    use windows::Media::Ocr::OcrEngine;
+
+    OcrEngine::TryCreateFromUserProfileLanguages().is_ok()
+}
+
+#[cfg(not(target_os = "windows"))]
+pub const fn is_available() -> bool {
+    false
+}
+
+#[cfg(target_os = "windows")]
 pub fn recognize(input: &[u8]) -> Result<RecognizedImage, OcrAdapterError> {
     use windows::{
         Graphics::Imaging::BitmapDecoder,
