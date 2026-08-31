@@ -13,13 +13,19 @@ function Test-UninstallCommandParsing {
   $install = 'C:\Temp\veil-test'
   foreach ($command in @(
     'C:\Temp\veil-test\uninstall.exe /S',
-    '"C:\Temp\veil-test\uninstall.exe" /S'
+    '"C:\Temp\veil-test\uninstall.exe" /S',
+    'C:\Temp\veil-test\subdir\..\uninstall.exe /S',
+    '"C:\Temp\veil-test\subdir\..\uninstall.exe" /S /D=C:\Temp'
   )) {
     if (-not (Test-UninstallEntryTargetsDirectory -Entry ([pscustomobject]@{ InstallLocation = $null; UninstallString = $command }) -InstallDirectory $install)) { throw "Rejected valid uninstall command: $command" }
   }
   foreach ($command in @(
     'C:\Temp\veil-test\uninstall.exe.evil',
     '"C:\Temp\veil-test\uninstall.exe.evil" /S',
+    'C:\Temp\veil-test-evil\uninstall.exe /S',
+    '"C:\Temp\veil-test-evil\uninstall.exe" /S',
+    'C:\Temp\veil-test\..\veil-test-evil\uninstall.exe /S',
+    '"C:\Temp\veil-test\..\veil-test-evil\uninstall.exe" /S',
     'prefix C:\Temp\veil-test\uninstall.exe',
     '"C:\Temp\veil-test\uninstall.exe /S'
   )) {
