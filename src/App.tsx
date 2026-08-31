@@ -30,7 +30,8 @@ import {
 import { ImageWorkflow } from "./components/ImageWorkflow";
 import { InputModeTabs, type InputMode } from "./components/InputModeTabs";
 import { PdfWorkflow } from "./components/PdfWorkflow";
-import { isDesktop, sanitizeText, saveCleanedText, scanText } from "./lib/bridge";
+import { TrustCenter, type TrustRuntimeState } from "./components/TrustCenter";
+import { getRuntimeInfo, isDesktop, sanitizeText, saveCleanedText, scanText } from "./lib/bridge";
 import { syntheticSample } from "./lib/sample";
 import type {
   Category,
@@ -39,6 +40,7 @@ import type {
   SanitizeResult,
   ScanOptions,
   ScanReport,
+  RuntimeInfo,
   Severity,
 } from "./lib/types";
 
@@ -197,7 +199,11 @@ function App() {
   const [dropActive, setDropActive] = useState(false);
   const [copied, setCopied] = useState(false);
   const [savedPath, setSavedPath] = useState("");
+  const [runtimeInfo, setRuntimeInfo] = useState<RuntimeInfo | null>(null);
+  const [runtimeState, setRuntimeState] = useState<TrustRuntimeState>("loading");
+  const [trustOpen, setTrustOpen] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
+  const trustTrigger = useRef<HTMLButtonElement>(null);
 
   const options: ScanOptions = useMemo(() => ({
     maxBytes: MAX_BYTES,
@@ -216,6 +222,29 @@ function App() {
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }, [stage]);
+
+  useEffect(() => {
+    let active = true;
+    void getRuntimeInfo()
+      .then((info) => {
+        if (!active) return;
+        setRuntimeInfo(info);
+        setRuntimeState("loaded");
+      })
+      .catch(() => {
+        if (!active) return;
+        setRuntimeInfo(null);
+        setRuntimeState("failed");
+      });
+    return () => { active = false; };
+  }, []);
+
+  const buildIdentity = runtimeState === "loading"
+    ? "Loading build identity"
+    : runtimeInfo?.verifiedBuild
+      ? "Trusted release beta"
+      : "Unverified build";
+  const buildDetail = runtimeInfo ? `${runtimeInfo.channel} · ${runtimeInfo.commit}` : "Local runtime record";
 
   async function acceptFile(file: File) {
     setError("");
@@ -330,7 +359,17 @@ function App() {
         </button>
         <div className="header-actions">
           <span className="runtime-badge"><span />{isDesktop() ? "Desktop engine" : "Browser preview"}</span>
-          <span className="build-label">Open-source foundation</span>
+          <button
+            ref={trustTrigger}
+            className="build-label"
+            type="button"
+            aria-haspopup="dialog"
+            aria-expanded={trustOpen}
+            onClick={() => setTrustOpen(true)}
+          >
+            <ShieldCheck size={15} />
+            <span><strong>{buildIdentity}</strong><small>{buildDetail}</small></span>
+          </button>
         </div>
       </header>
 
@@ -339,7 +378,7 @@ function App() {
           <StepRail stage={stage} />
           <PrivacyNote />
           <div className="scope-note">
-            <span>Milestone D</span>
+            <span>{buildIdentity}</span>
             <p>Text, image, and flattened PDF safety with local saved-file verification.</p>
           </div>
         </aside>
@@ -560,9 +599,19 @@ function App() {
         </main>
       </div>
 
+      <TrustCenter
+        open={trustOpen}
+        runtimeInfo={runtimeInfo}
+        runtimeState={runtimeState}
+        onClose={() => {
+          setTrustOpen(false);
+          window.requestAnimationFrame(() => trustTrigger.current?.focus());
+        }}
+      />
+
       <footer className="app-footer">
-        <span>VeilSend v0.1 · Milestone D</span>
-        <span><span className="offline-dot" /> Designed to work offline</span>
+        <span>VeilSend {runtimeInfo?.appVersion ?? "0.2.0-beta.1"} · {buildIdentity}</span>
+        <span><span className="offline-dot" /> {runtimeInfo ? buildDetail : "Designed to work offline"}</span>
       </footer>
     </div>
   );
