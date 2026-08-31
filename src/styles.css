@@ -82,7 +82,9 @@ button:focus-visible, summary:focus-visible, input:focus-visible, textarea:focus
 .header-actions { display: flex; align-items: center; gap: 18px; font-size: 12px; }
 .build-label { display: inline-flex; align-items: center; gap: 8px; padding: 5px 7px; color: var(--muted); border: 1px solid transparent; border-radius: 7px 7px 7px 3px; background: transparent; cursor: pointer; text-align: left; }
 .build-label:hover { color: var(--ink); border-color: var(--line); background: rgba(255,255,255,.38); }
-.build-label > svg { color: var(--green); }
+.build-label.verified > svg { color: var(--green); }
+.build-label.unverified > svg { color: var(--red); }
+.build-label.loading > svg { color: var(--muted); }
 .build-label strong, .build-label small { display: block; }
 .build-label strong { color: inherit; font-size: 10px; font-weight: 800; letter-spacing: .04em; }
 .build-label small { margin-top: 2px; color: #878176; font: 8px "Cascadia Mono", Consolas, monospace; }

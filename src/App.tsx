@@ -21,6 +21,7 @@ import {
   Plus,
   RefreshCcw,
   ScanLine,
+  ShieldAlert,
   ShieldCheck,
   Sparkles,
   Upload,
@@ -245,6 +246,11 @@ function App() {
       ? "Trusted release beta"
       : "Unverified build";
   const buildDetail = runtimeInfo ? `${runtimeInfo.channel} · ${runtimeInfo.commit}` : "Local runtime record";
+  const BuildIdentityIcon = runtimeState === "loading"
+    ? LoaderCircle
+    : runtimeInfo?.verifiedBuild
+      ? ShieldCheck
+      : ShieldAlert;
 
   async function acceptFile(file: File) {
     setError("");
@@ -361,13 +367,13 @@ function App() {
           <span className="runtime-badge"><span />{isDesktop() ? "Desktop engine" : "Browser preview"}</span>
           <button
             ref={trustTrigger}
-            className="build-label"
+            className={`build-label ${runtimeState === "loading" ? "loading" : runtimeInfo?.verifiedBuild ? "verified" : "unverified"}`}
             type="button"
             aria-haspopup="dialog"
             aria-expanded={trustOpen}
             onClick={() => setTrustOpen(true)}
           >
-            <ShieldCheck size={15} />
+            <BuildIdentityIcon className={runtimeState === "loading" ? "spin" : undefined} size={15} />
             <span><strong>{buildIdentity}</strong><small>{buildDetail}</small></span>
           </button>
         </div>
