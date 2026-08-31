@@ -38,6 +38,7 @@ import {
   resizeNormalizedRectangle,
   type PdfFindingKind,
 } from "../lib/pdfWorkflowModel";
+import { derivePdfDiagnostics, type DiagnosticErrorCode, type WorkflowDiagnostics } from "../lib/diagnostics";
 import type {
   CleanedPdfFile,
   ImageRedactionDecision,
@@ -148,11 +149,13 @@ export function PdfWorkflow({
   onStageChange,
   onSwitchMode,
   onError,
+  onDiagnosticsChange,
 }: {
   stage: Stage;
   onStageChange: (stage: Stage) => void;
   onSwitchMode: (mode: Exclude<InputMode, "pdf">) => void;
-  onError: (message: string) => void;
+  onError: (message: string, code?: DiagnosticErrorCode) => void;
+  onDiagnosticsChange: (next: WorkflowDiagnostics) => void;
 }) {
   const [session, setSession] = useState<PdfSession | null>(null);
   const [result, setResult] = useState<CleanedPdfFile | null>(null);
@@ -170,6 +173,30 @@ export function PdfWorkflow({
   const [drawMode, setDrawMode] = useState(false);
   const [draft, setDraft] = useState<DrawDraft | null>(null);
   const [resizeDraft, setResizeDraft] = useState<ResizeDraft | null>(null);
+
+  useEffect(() => {
+    onDiagnosticsChange(derivePdfDiagnostics({
+      stage,
+      inputBytes: stage === "add" ? null : session?.bytes ?? null,
+      pageCount: stage === "add" ? null : session?.pageCount ?? null,
+      pages: session?.pages.map((page) => ({
+        textAvailability: page.ocr.availability,
+        faceAvailability: page.faces.availability,
+        qrAvailability: page.qr.availability,
+        barcodeAvailability: page.barcodes.availability,
+      })) ?? [],
+      resultChecks: result ? {
+        savedBytesMatch: result.verification.savedBytesMatch,
+        pageCountMatch: result.verification.pageCountMatch,
+        pagesRendered: result.verification.pagesRendered,
+        pagesRebuilt: result.pagesRebuilt,
+        text: result.verification.ocrChecked,
+        face: result.verification.faceChecked,
+        qr: result.verification.qrChecked,
+        barcode: result.verification.barcodeChecked,
+      } : null,
+    }));
+  }, [onDiagnosticsChange, result, session, stage]);
 
   const allFindings = useMemo(() => session ? buildPdfFindings(session) : [], [session]);
   const currentPage = session?.pages[selectedPage] ?? null;
@@ -196,7 +223,7 @@ export function PdfWorkflow({
         if (active) setPreview(nextPreview);
       })
       .catch((error) => {
-        if (active) onError(readableError(error));
+        if (active) onError(readableError(error), "workflowFailed");
       })
       .finally(() => {
         if (active) setPreviewBusy(false);
@@ -228,7 +255,7 @@ export function PdfWorkflow({
       setResult(null);
       onStageChange("review");
     } catch (error) {
-      onError(readableError(error));
+      onError(readableError(error), "inputRejected");
     } finally {
       setBusy(false);
     }
@@ -251,7 +278,7 @@ export function PdfWorkflow({
       setResult(nextResult);
       onStageChange("result");
     } catch (error) {
-      onError(readableError(error));
+      onError(readableError(error), "workflowFailed");
     } finally {
       setBusy(false);
     }
@@ -265,7 +292,7 @@ export function PdfWorkflow({
       clearError = readableError(error);
     } finally {
       setResult(null);
-      onError(clearError);
+      onError(clearError, clearError ? "workflowFailed" : "none");
       onStageChange("add");
     }
   }
@@ -275,7 +302,7 @@ export function PdfWorkflow({
       await clearCurrentSession();
       onError("");
     } catch (error) {
-      onError(readableError(error));
+      onError(readableError(error), "workflowFailed");
     } finally {
       onSwitchMode(mode);
     }
@@ -433,7 +460,7 @@ export function PdfWorkflow({
     );
     return (
       <section className={`stage-view review-stage pdf-review-stage ${busy ? "is-busy" : ""}`} aria-busy={busy}>
-        <button className="back-button" type="button" disabled={busy} onClick={() => onStageChange("add")}><ArrowLeft size={16} /> Choose a different PDF</button>
+        <button className="back-button" type="button" disabled={busy} onClick={() => void startAgain()}><ArrowLeft size={16} /> Choose a different PDF</button>
         <div className="review-heading">
           <div>
             <div className="eyebrow"><FileStack size={15} /> PDF page review</div>

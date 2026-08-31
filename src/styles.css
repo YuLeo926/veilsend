@@ -510,6 +510,12 @@ button:focus-visible, summary:focus-visible, input:focus-visible, textarea:focus
 .trust-capability-grid > div.available { color: var(--green); border-color: rgba(36,106,80,.24); background: rgba(226,239,229,.56); }
 .trust-capability-grid span { min-width: 0; overflow: hidden; color: var(--ink); font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
 .trust-capability-grid b { color: inherit; font-size: 7px; letter-spacing: .04em; text-transform: uppercase; }
+.trust-diagnostics { margin: 19px 24px 0; padding: 15px; display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: center; gap: 12px 18px; border: 1px solid var(--line-dark); border-radius: 8px 8px 8px 3px; background: rgba(235,230,219,.44); }
+.trust-diagnostics > div > span { display: block; margin-bottom: 4px; color: var(--orange-dark); font-size: 8px; font-weight: 850; letter-spacing: .13em; text-transform: uppercase; }
+.trust-diagnostics h3 { margin: 0; color: var(--ink); font: 700 17px/1 "Palatino Linotype", Palatino, serif; }
+.trust-diagnostics p { margin: 6px 0 0; color: var(--muted); font-size: 9px; line-height: 1.5; }
+.trust-diagnostics .secondary-button { white-space: nowrap; }
+.trust-copy-status { grid-column: 1 / -1; padding-top: 9px; border-top: 1px solid var(--line); }
 .trust-links { margin: 20px 24px 24px; padding-top: 16px; border-top: 1px solid var(--line); }
 .trust-links > div { display: flex; flex-wrap: wrap; gap: 7px; }
 .trust-links button { min-height: 33px; padding: 0 10px; display: inline-flex; align-items: center; gap: 6px; color: var(--ink); border: 1px solid var(--line-dark); border-radius: 6px 6px 6px 3px; background: rgba(249,247,241,.82); cursor: pointer; font-size: 9px; font-weight: 750; }
@@ -587,12 +593,13 @@ button:focus-visible, summary:focus-visible, input:focus-visible, textarea:focus
   .trust-center { max-height: calc(100vh - 24px); }
   .trust-center-header { min-height: 72px; padding: 17px; }
   .trust-center h2 { font-size: 23px; }
-  .trust-identity, .trust-facts, .trust-boundary, .trust-capabilities { margin-right: 17px; margin-left: 17px; }
+  .trust-identity, .trust-facts, .trust-boundary, .trust-capabilities, .trust-diagnostics { margin-right: 17px; margin-left: 17px; }
   .trust-links { margin-right: 17px; margin-left: 17px; }
   .trust-facts { grid-template-columns: 1fr; }
   .trust-facts > div, .trust-facts > div:nth-child(2n) { border-right: 0; border-bottom: 1px solid var(--line); }
   .trust-facts > div:last-child { border-bottom: 0; }
   .trust-capability-grid { grid-template-columns: 1fr; }
+  .trust-diagnostics { grid-template-columns: 1fr; }
   .trust-section-heading { align-items: flex-start; flex-direction: column; gap: 7px; }
   .trust-section-heading small { max-width: none; text-align: left; }
 }

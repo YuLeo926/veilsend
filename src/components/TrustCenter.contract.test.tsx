@@ -3,6 +3,7 @@ import { act, useRef, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TrustCenter } from "./TrustCenter";
+import { emptyWorkflowDiagnostics } from "../lib/diagnostics";
 import type { RuntimeInfo } from "../lib/types";
 
 const openProjectLink = vi.hoisted(() => vi.fn());
@@ -19,6 +20,7 @@ const runtimeInfo: RuntimeInfo = {
   license: "MIT",
   detectors: { text: "available", metadata: "available", face: "available", qr: "available", barcode: "available", pdf: "available" },
 };
+const workflowDiagnostics = emptyWorkflowDiagnostics("text");
 
 let container: HTMLDivElement;
 let root: Root;
@@ -52,6 +54,7 @@ function DialogHarness({ busy = false }: { busy?: boolean }) {
         busy={busy}
         runtimeInfo={runtimeInfo}
         runtimeState="loaded"
+        workflowDiagnostics={workflowDiagnostics}
         onClose={() => {
           setOpen(false);
           window.requestAnimationFrame(() => trigger.current?.focus());
@@ -122,7 +125,7 @@ describe("TrustCenter interaction contract", () => {
     expect(container.querySelector('[role="dialog"]')).toBeNull();
 
     const onClose = vi.fn();
-    await render(<TrustCenter open busy runtimeInfo={runtimeInfo} runtimeState="loaded" onClose={onClose} />);
+    await render(<TrustCenter open busy runtimeInfo={runtimeInfo} runtimeState="loaded" workflowDiagnostics={workflowDiagnostics} onClose={onClose} />);
     await settleFocus();
     const busyBackdrop = container.querySelector<HTMLElement>(".trust-backdrop")!;
     const busyClose = container.querySelector<HTMLButtonElement>('button[aria-label="Close trust center"]')!;
@@ -134,7 +137,7 @@ describe("TrustCenter interaction contract", () => {
 
   it("opens project pages only from clicks, exposes a generic failure, and removes its listener on unmount", async () => {
     const onClose = vi.fn();
-    await render(<TrustCenter open runtimeInfo={runtimeInfo} runtimeState="loaded" onClose={onClose} />);
+    await render(<TrustCenter open runtimeInfo={runtimeInfo} runtimeState="loaded" workflowDiagnostics={workflowDiagnostics} onClose={onClose} />);
     await settleFocus();
     expect(openProjectLink).not.toHaveBeenCalled();
 
@@ -151,12 +154,49 @@ describe("TrustCenter interaction contract", () => {
     expect(container.textContent).toContain("Could not open that link. Check your system browser and try again.");
     expect(container.textContent).not.toContain("private internal error");
 
-    await render(<TrustCenter open={false} runtimeInfo={runtimeInfo} runtimeState="loaded" onClose={onClose} />);
+    await render(<TrustCenter open={false} runtimeInfo={runtimeInfo} runtimeState="loaded" workflowDiagnostics={workflowDiagnostics} onClose={onClose} />);
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     expect(onClose).not.toHaveBeenCalled();
 
     await act(async () => { root.unmount(); });
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("copies diagnostics only after a click and prevents dismissal until clipboard work settles", async () => {
+    let resolveClipboard: (() => void) | undefined;
+    const writeText = vi.fn<(value: string) => Promise<void>>(() => new Promise<void>((resolve) => { resolveClipboard = resolve; }));
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    const onClose = vi.fn();
+
+    await render(<TrustCenter open runtimeInfo={runtimeInfo} runtimeState="loaded" workflowDiagnostics={workflowDiagnostics} onClose={onClose} />);
+    await settleFocus();
+    expect(writeText).not.toHaveBeenCalled();
+
+    const copy = getButton("Copy diagnostics");
+    await act(async () => { copy.click(); });
+    expect(writeText).toHaveBeenCalledTimes(1);
+    expect(writeText.mock.calls[0]?.[0]).toContain("VeilSend privacy-safe diagnostics");
+
+    const backdrop = container.querySelector<HTMLElement>(".trust-backdrop")!;
+    await act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
+    await act(async () => { backdrop.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })); });
+    await click(container.querySelector<HTMLButtonElement>('button[aria-label="Close trust center"]')!);
+    expect(onClose).not.toHaveBeenCalled();
+
+    await act(async () => { resolveClipboard?.(); await Promise.resolve(); });
+    expect(container.textContent).toContain("Diagnostics copied to your clipboard. Nothing was saved or uploaded.");
+    expect(container.textContent).not.toContain("pasted-text.txt");
+  });
+
+  it("shows generic copy failure feedback without exposing clipboard errors", async () => {
+    const writeText = vi.fn<(value: string) => Promise<void>>().mockRejectedValue(new Error("clipboard token: private-value"));
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    await render(<TrustCenter open runtimeInfo={runtimeInfo} runtimeState="loaded" workflowDiagnostics={workflowDiagnostics} onClose={vi.fn()} />);
+    await settleFocus();
+    await click(getButton("Copy diagnostics"));
+    await act(async () => { await Promise.resolve(); });
+    expect(container.textContent).toContain("Could not copy diagnostics. Check clipboard access and try again.");
+    expect(container.textContent).not.toContain("clipboard token: private-value");
   });
 });

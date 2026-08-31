@@ -36,6 +36,7 @@ import {
   isImagePasteShortcut,
   remainingRiskCount,
 } from "../lib/imageWorkflowModel";
+import { deriveImageDiagnostics, type DiagnosticErrorCode, type WorkflowDiagnostics } from "../lib/diagnostics";
 import type {
   Category,
   CleanedImageFile,
@@ -94,16 +95,36 @@ export function ImageWorkflow({
   onStageChange,
   onSwitchMode,
   onError,
+  onDiagnosticsChange,
 }: {
   stage: Stage;
   onStageChange: (stage: Stage) => void;
   onSwitchMode: (mode: Exclude<InputMode, "image">) => void;
-  onError: (message: string) => void;
+  onError: (message: string, code?: DiagnosticErrorCode) => void;
+  onDiagnosticsChange: (next: WorkflowDiagnostics) => void;
 }) {
   const [session, setSession] = useState<ImageSession | null>(null);
   const [result, setResult] = useState<CleanedImageFile | null>(null);
   const [decisions, setDecisions] = useState<Record<string, ImageRedactionDecision>>({});
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    onDiagnosticsChange(deriveImageDiagnostics({
+      stage,
+      inputBytes: stage === "add" ? null : session?.inspection.bytes ?? null,
+      metadataInspected: session !== null,
+      textAvailability: session?.ocr.availability ?? null,
+      faceAvailability: session?.faces.availability ?? null,
+      qrAvailability: session?.qr.availability ?? null,
+      barcodeAvailability: session?.barcodes.availability ?? null,
+      resultChecks: result ? {
+        text: result.verification.ocrChecked,
+        face: result.verification.faceChecked,
+        qr: result.verification.qrChecked,
+        barcode: result.verification.barcodeChecked,
+      } : null,
+    }));
+  }, [onDiagnosticsChange, result, session, stage]);
 
   const textFindings = session?.ocr.report?.findings ?? [];
   const faceFindings = session?.faces.findings ?? [];
@@ -162,7 +183,7 @@ export function ImageWorkflow({
       if (!nextSession) return;
       acceptSession(nextSession);
     } catch (error) {
-      onError(readableError(error));
+      onError(readableError(error), "inputRejected");
     } finally {
       setBusy(false);
     }
@@ -175,7 +196,7 @@ export function ImageWorkflow({
       await clearCurrentSession();
       acceptSession(await pasteImage());
     } catch (error) {
-      onError(readableError(error));
+      onError(readableError(error), "inputRejected");
     } finally {
       setBusy(false);
     }
@@ -194,7 +215,7 @@ export function ImageWorkflow({
       setResult(nextResult);
       onStageChange("result");
     } catch (error) {
-      onError(readableError(error));
+      onError(readableError(error), "workflowFailed");
     } finally {
       setBusy(false);
     }
@@ -208,7 +229,7 @@ export function ImageWorkflow({
       clearError = readableError(error);
     } finally {
       setResult(null);
-      onError(clearError);
+      onError(clearError, clearError ? "workflowFailed" : "none");
       onStageChange("add");
     }
   }
@@ -218,7 +239,7 @@ export function ImageWorkflow({
       await clearCurrentSession();
       onError("");
     } catch (error) {
-      onError(readableError(error));
+      onError(readableError(error), "workflowFailed");
     } finally {
       onSwitchMode(mode);
     }
@@ -287,7 +308,7 @@ export function ImageWorkflow({
 
     return (
       <section className="stage-view review-stage image-review-stage">
-        <button className="back-button" type="button" onClick={() => onStageChange("add")}><ArrowLeft size={16} /> Choose a different image</button>
+        <button className="back-button" type="button" onClick={() => void startAgain()}><ArrowLeft size={16} /> Choose a different image</button>
         <div className="review-heading">
           <div>
             <div className="eyebrow"><ScanLine size={15} /> Image safety review</div>

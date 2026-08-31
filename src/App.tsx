@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   ArrowLeft,
@@ -33,6 +33,12 @@ import { InputModeTabs, type InputMode } from "./components/InputModeTabs";
 import { PdfWorkflow } from "./components/PdfWorkflow";
 import { TrustCenter, type TrustRuntimeState } from "./components/TrustCenter";
 import { getRuntimeInfo, isDesktop, sanitizeText, saveCleanedText, scanText } from "./lib/bridge";
+import {
+  deriveTextDiagnostics,
+  emptyWorkflowDiagnostics,
+  type DiagnosticErrorCode,
+  type WorkflowDiagnostics,
+} from "./lib/diagnostics";
 import { syntheticSample } from "./lib/sample";
 import type {
   Category,
@@ -203,6 +209,8 @@ function App() {
   const [runtimeInfo, setRuntimeInfo] = useState<RuntimeInfo | null>(null);
   const [runtimeState, setRuntimeState] = useState<TrustRuntimeState>("loading");
   const [trustOpen, setTrustOpen] = useState(false);
+  const [activeDiagnostics, setActiveDiagnostics] = useState<WorkflowDiagnostics>(() => emptyWorkflowDiagnostics("text"));
+  const [diagnosticError, setDiagnosticError] = useState<DiagnosticErrorCode>("none");
   const fileInput = useRef<HTMLInputElement>(null);
   const trustTrigger = useRef<HTMLButtonElement>(null);
 
@@ -240,6 +248,34 @@ function App() {
     return () => { active = false; };
   }, []);
 
+  useEffect(() => {
+    if (mode !== "text") return;
+    setActiveDiagnostics(deriveTextDiagnostics(
+      stage,
+      text ? new TextEncoder().encode(text).byteLength : null,
+      report !== null,
+      result !== null,
+    ));
+  }, [mode, report, result, stage, text]);
+
+  const onWorkflowDiagnosticsChange = useCallback((next: WorkflowDiagnostics) => {
+    setActiveDiagnostics(next);
+  }, []);
+
+  const setWorkflowError = useCallback((message: string, code: DiagnosticErrorCode = "workflowFailed") => {
+    setError(message);
+    setDiagnosticError(message ? code : "none");
+  }, []);
+
+  const workflowDiagnostics = useMemo(() => ({
+    inputKind: activeDiagnostics.inputKind,
+    workflowState: activeDiagnostics.workflowState,
+    inputSizeBucket: activeDiagnostics.inputSizeBucket,
+    pageCount: activeDiagnostics.pageCount,
+    lastErrorCode: diagnosticError,
+    detectors: activeDiagnostics.detectors,
+  }), [activeDiagnostics, diagnosticError]);
+
   const buildIdentity = runtimeState === "loading"
     ? "Loading build identity"
     : runtimeInfo?.verifiedBuild
@@ -253,14 +289,14 @@ function App() {
       : ShieldAlert;
 
   async function acceptFile(file: File) {
-    setError("");
+    setWorkflowError("");
     const extension = file.name.split(".").pop()?.toLowerCase() ?? "";
     if (!acceptedExtensions.includes(extension) && !file.name.startsWith(".env")) {
-      setError("Text mode accepts UTF-8 .txt, .log, .json, and .env files. Use Images for JPEG and PNG metadata.");
+      setWorkflowError("Text mode accepts UTF-8 .txt, .log, .json, and .env files. Use Images for JPEG and PNG metadata.", "inputRejected");
       return;
     }
     if (file.size > MAX_BYTES) {
-      setError("This file is larger than VeilSend's 10 MB local safety limit.");
+      setWorkflowError("This file is larger than VeilSend's 10 MB local safety limit.", "inputRejected");
       return;
     }
     try {
@@ -269,17 +305,17 @@ function App() {
       setText(nextText);
       setFilename(file.name);
     } catch (fileError) {
-      setError(readableError(fileError));
+      setWorkflowError(readableError(fileError), "inputRejected");
     }
   }
 
   async function runScan() {
     if (!text.trim()) {
-      setError("Paste some text or choose a supported file first.");
+      setWorkflowError("Paste some text or choose a supported file first.", "inputRejected");
       return;
     }
     setBusy(true);
-    setError("");
+    setWorkflowError("");
     try {
       const nextReport = await scanText(text, options);
       setReport(nextReport);
@@ -291,7 +327,7 @@ function App() {
       setRevealed(new Set());
       setStage("review");
     } catch (scanError) {
-      setError(readableError(scanError));
+      setWorkflowError(readableError(scanError));
     } finally {
       setBusy(false);
     }
@@ -300,7 +336,7 @@ function App() {
   async function runClean() {
     if (!report) return;
     setBusy(true);
-    setError("");
+    setWorkflowError("");
     try {
       const nextResult = await sanitizeText({
         originalText: text,
@@ -312,7 +348,7 @@ function App() {
       setResult(nextResult);
       setStage("result");
     } catch (cleanError) {
-      setError(readableError(cleanError));
+      setWorkflowError(readableError(cleanError));
     } finally {
       setBusy(false);
     }
@@ -327,7 +363,8 @@ function App() {
     setResult(null);
     setDecisions({});
     setRevealed(new Set());
-    setError("");
+    setWorkflowError("");
+    setActiveDiagnostics(emptyWorkflowDiagnostics("text"));
     setCopied(false);
     setSavedPath("");
   }
@@ -335,7 +372,8 @@ function App() {
   function switchMode(nextMode: InputMode) {
     setMode(nextMode);
     setStage("add");
-    setError("");
+    setWorkflowError("");
+    setActiveDiagnostics(emptyWorkflowDiagnostics(nextMode));
   }
 
   async function copyResult() {
@@ -351,7 +389,7 @@ function App() {
       const path = await saveCleanedText(cleanedFilename(filename), result.cleanedText);
       if (path) setSavedPath(path);
     } catch (saveError) {
-      setError(readableError(saveError));
+      setWorkflowError(readableError(saveError), "saveFailed");
     }
   }
 
@@ -421,12 +459,12 @@ function App() {
                     <span><FileText size={18} /></span>
                     <div><strong>{filename}</strong><small>{text ? `${formatBytes(new TextEncoder().encode(text).byteLength)} ready to scan` : "Paste text below or drop a file here"}</small></div>
                   </div>
-                  {text && <button className="quiet-button" type="button" onClick={() => { setText(""); setFilename("pasted-text.txt"); }}><X size={15} /> Clear</button>}
+                  {text && <button className="quiet-button" type="button" onClick={() => { setText(""); setFilename("pasted-text.txt"); setWorkflowError(""); }}><X size={15} /> Clear</button>}
                 </div>
                 <textarea
                   className="source-input"
                   value={text}
-                  onChange={(event) => { setText(event.target.value); setFilename("pasted-text.txt"); }}
+                  onChange={(event) => { setText(event.target.value); setFilename("pasted-text.txt"); setWorkflowError(""); }}
                   placeholder={`Paste terminal output, a debug log, JSON, or .env content…\n\nVeilSend will not send it anywhere.`}
                   spellCheck={false}
                   aria-label="Content to scan"
@@ -447,7 +485,7 @@ function App() {
                         event.target.value = "";
                       }}
                     />
-                    <button className="text-button" type="button" onClick={() => { setText(syntheticSample); setFilename("synthetic-support-log.txt"); setCustomTerms("Project Firefly"); }}>
+                    <button className="text-button" type="button" onClick={() => { setText(syntheticSample); setFilename("synthetic-support-log.txt"); setCustomTerms("Project Firefly"); setWorkflowError(""); }}>
                       <Sparkles size={15} /> Try safe sample
                     </button>
                   </div>
@@ -590,7 +628,8 @@ function App() {
               stage={stage}
               onStageChange={setStage}
               onSwitchMode={switchMode}
-              onError={setError}
+              onError={setWorkflowError}
+              onDiagnosticsChange={onWorkflowDiagnosticsChange}
             />
           )}
 
@@ -599,7 +638,8 @@ function App() {
               stage={stage}
               onStageChange={setStage}
               onSwitchMode={switchMode}
-              onError={setError}
+              onError={setWorkflowError}
+              onDiagnosticsChange={onWorkflowDiagnosticsChange}
             />
           )}
         </main>
@@ -609,6 +649,7 @@ function App() {
         open={trustOpen}
         runtimeInfo={runtimeInfo}
         runtimeState={runtimeState}
+        workflowDiagnostics={workflowDiagnostics}
         onClose={() => {
           setTrustOpen(false);
           window.requestAnimationFrame(() => trustTrigger.current?.focus());

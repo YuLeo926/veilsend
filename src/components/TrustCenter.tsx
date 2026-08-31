@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Check, ExternalLink, LockKeyhole, ShieldAlert, ShieldCheck, X } from "lucide-react";
 import { openProjectLink, type ProjectLink } from "../lib/projectLinks";
+import { formatDiagnostics, type WorkflowDiagnostics } from "../lib/diagnostics";
 import type { RuntimeInfo } from "../lib/types";
 
 export type TrustRuntimeState = "loading" | "loaded" | "failed";
@@ -10,6 +11,7 @@ interface TrustCenterProps {
   onClose: () => void;
   runtimeInfo: RuntimeInfo | null;
   runtimeState: TrustRuntimeState;
+  workflowDiagnostics: WorkflowDiagnostics;
   busy?: boolean;
 }
 
@@ -22,17 +24,20 @@ const detectorLabels: Array<[keyof RuntimeInfo["detectors"], string]> = [
   ["pdf", "PDF review"],
 ];
 
-export function TrustCenter({ open, onClose, runtimeInfo, runtimeState, busy = false }: TrustCenterProps) {
+export function TrustCenter({ open, onClose, runtimeInfo, runtimeState, workflowDiagnostics, busy = false }: TrustCenterProps) {
   const closeButton = useRef<HTMLButtonElement>(null);
   const dialog = useRef<HTMLDivElement>(null);
   const [linkError, setLinkError] = useState("");
+  const [copyBusy, setCopyBusy] = useState(false);
+  const [copyStatus, setCopyStatus] = useState("");
+  const isBusy = busy || copyBusy;
 
   useEffect(() => {
     if (!open) return;
 
     const focusClose = window.setTimeout(() => closeButton.current?.focus(), 0);
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !busy) {
+      if (event.key === "Escape" && !isBusy) {
         event.preventDefault();
         onClose();
         return;
@@ -59,10 +64,13 @@ export function TrustCenter({ open, onClose, runtimeInfo, runtimeState, busy = f
       window.clearTimeout(focusClose);
       document.removeEventListener("keydown", onKeyDown);
     };
-  }, [busy, onClose, open]);
+  }, [isBusy, onClose, open]);
 
   useEffect(() => {
-    if (open) setLinkError("");
+    if (open) {
+      setLinkError("");
+      setCopyStatus("");
+    }
   }, [open]);
 
   if (!open) return null;
@@ -83,7 +91,22 @@ export function TrustCenter({ open, onClose, runtimeInfo, runtimeState, busy = f
   }
 
   function requestClose() {
-    if (!busy) onClose();
+    if (!isBusy) onClose();
+  }
+
+  async function copyDiagnostics() {
+    if (!runtimeInfo || isBusy) return;
+    setCopyStatus("");
+    setCopyBusy(true);
+    try {
+      // Formatting and clipboard access occur only after this explicit user action.
+      await navigator.clipboard.writeText(formatDiagnostics(runtimeInfo, workflowDiagnostics));
+      setCopyStatus("Diagnostics copied to your clipboard. Nothing was saved or uploaded.");
+    } catch {
+      setCopyStatus("Could not copy diagnostics. Check clipboard access and try again.");
+    } finally {
+      setCopyBusy(false);
+    }
   }
 
   return (
@@ -101,7 +124,7 @@ export function TrustCenter({ open, onClose, runtimeInfo, runtimeState, busy = f
             <span className="trust-kicker">Local trust center</span>
             <h2 id="trust-center-title">Build identity &amp; local boundaries</h2>
           </div>
-          <button ref={closeButton} className="trust-close" type="button" onClick={requestClose} disabled={busy} aria-label="Close trust center">
+          <button ref={closeButton} className="trust-close" type="button" onClick={requestClose} disabled={isBusy} aria-label="Close trust center">
             <X size={18} />
           </button>
         </header>
@@ -152,6 +175,18 @@ export function TrustCenter({ open, onClose, runtimeInfo, runtimeState, busy = f
               </div>;
             })}
           </div>
+        </section>
+
+        <section className="trust-diagnostics" aria-labelledby="diagnostics-title">
+          <div>
+            <span>Copy only on your action</span>
+            <h3 id="diagnostics-title">Privacy-safe diagnostics</h3>
+            <p>Includes build identity, capability states, and bounded workflow status. It excludes source content, filenames, paths, previews, payloads, geometry, custom terms, bytes, and hashes.</p>
+          </div>
+          <button type="button" className="secondary-button" disabled={!runtimeInfo || isBusy} onClick={() => void copyDiagnostics()}>
+            {copyBusy ? "Copying diagnostics…" : "Copy diagnostics"}
+          </button>
+          {copyStatus && <p className="trust-copy-status" role="status">{copyStatus}</p>}
         </section>
 
         <section className="trust-links" aria-label="VeilSend project links">
