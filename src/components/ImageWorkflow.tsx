@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   ArrowLeft,
@@ -107,6 +107,9 @@ export function ImageWorkflow({
   const [result, setResult] = useState<CleanedImageFile | null>(null);
   const [decisions, setDecisions] = useState<Record<string, ImageRedactionDecision>>({});
   const [busy, setBusy] = useState(false);
+  const operationGeneration = useRef(0);
+
+  useEffect(() => () => { operationGeneration.current += 1; }, []);
 
   useEffect(() => {
     onDiagnosticsChange(deriveImageDiagnostics({
@@ -175,35 +178,43 @@ export function ImageWorkflow({
   }
 
   async function chooseImage() {
+    const token = ++operationGeneration.current;
     setBusy(true);
     onError("");
     try {
       await clearCurrentSession();
       const nextSession = await pickImage();
+      if (operationGeneration.current !== token) return;
       if (!nextSession) return;
       acceptSession(nextSession);
     } catch (error) {
+      if (operationGeneration.current !== token) return;
       onError(readableError(error), "inputRejected");
     } finally {
-      setBusy(false);
+      if (operationGeneration.current === token) setBusy(false);
     }
   }
 
   async function pasteScreenshot() {
+    const token = ++operationGeneration.current;
     setBusy(true);
     onError("");
     try {
       await clearCurrentSession();
-      acceptSession(await pasteImage());
+      const nextSession = await pasteImage();
+      if (operationGeneration.current !== token) return;
+      acceptSession(nextSession);
     } catch (error) {
+      if (operationGeneration.current !== token) return;
       onError(readableError(error), "inputRejected");
     } finally {
-      setBusy(false);
+      if (operationGeneration.current === token) setBusy(false);
     }
   }
 
   async function createCleanCopy() {
     if (!session) return;
+    const token = ++operationGeneration.current;
     setBusy(true);
     onError("");
     try {
@@ -211,23 +222,27 @@ export function ImageWorkflow({
         session.sessionId,
         Object.values(decisions),
       );
+      if (operationGeneration.current !== token) return;
       if (!nextResult) return;
       setResult(nextResult);
       onStageChange("result");
     } catch (error) {
+      if (operationGeneration.current !== token) return;
       onError(readableError(error), "workflowFailed");
     } finally {
-      setBusy(false);
+      if (operationGeneration.current === token) setBusy(false);
     }
   }
 
   async function startAgain() {
+    const token = ++operationGeneration.current;
     let clearError = "";
     try {
       await clearCurrentSession();
     } catch (error) {
       clearError = readableError(error);
     } finally {
+      if (operationGeneration.current !== token) return;
       setResult(null);
       onError(clearError, clearError ? "workflowFailed" : "none");
       onStageChange("add");
@@ -235,12 +250,15 @@ export function ImageWorkflow({
   }
 
   async function switchInputMode(mode: Exclude<InputMode, "image">) {
+    const token = ++operationGeneration.current;
     try {
       await clearCurrentSession();
       onError("");
     } catch (error) {
+      if (operationGeneration.current !== token) return;
       onError(readableError(error), "workflowFailed");
     } finally {
+      if (operationGeneration.current !== token) return;
       onSwitchMode(mode);
     }
   }

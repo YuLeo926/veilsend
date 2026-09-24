@@ -90,4 +90,38 @@ describe("privacy-safe diagnostics", () => {
     expect(pdf.pageCount).toBe(2);
     expect(pdf.detectors).toMatchObject({ text: "complete", face: "unavailable", qr: "complete", barcode: "complete", pdf: "failed" });
   });
+
+  it("never marks a PDF complete without a valid non-empty session and page evidence", () => {
+    const empty = derivePdfDiagnostics({
+      stage: "review", inputBytes: null, pageCount: null, pages: [], resultChecks: null,
+    });
+    expect(empty.pageCount).toBeNull();
+    expect(empty.detectors).toMatchObject({ text: "failed", face: "failed", qr: "failed", barcode: "failed", pdf: "failed" });
+
+    const invalidCount = derivePdfDiagnostics({
+      stage: "review", inputBytes: 1024, pageCount: 0, pages: [], resultChecks: null,
+    });
+    expect(invalidCount.pageCount).toBeNull();
+    expect(invalidCount.detectors.pdf).toBe("failed");
+  });
+
+  it("normalizes poisoned closed values and invalid page counts without outputting their values", () => {
+    const poisoned = {
+      ...emptyWorkflowDiagnostics("text"),
+      inputKind: "PRIVATE_INPUT_KIND",
+      workflowState: "PRIVATE_STATE",
+      inputSizeBucket: "PRIVATE_BUCKET",
+      pageCount: Number.NaN,
+      lastErrorCode: "PRIVATE_ERROR",
+      detectors: { ...emptyWorkflowDiagnostics("text").detectors, text: "PRIVATE_DETECTOR" },
+    } as unknown as WorkflowDiagnostics;
+    const output = formatDiagnostics(runtimeFixture, poisoned);
+    expect(output).toContain("input_kind=text\nworkflow_state=add\ninput_size=none\npages=not-applicable\nlast_error=workflowFailed\ndetector_text=failed");
+    for (const invalid of ["PRIVATE_INPUT_KIND", "PRIVATE_STATE", "PRIVATE_BUCKET", "PRIVATE_ERROR", "PRIVATE_DETECTOR", "NaN", "Infinity", "-1", "51"]) {
+      expect(output).not.toContain(invalid);
+    }
+    for (const invalidPage of [Number.POSITIVE_INFINITY, -1, 51]) {
+      expect(formatDiagnostics(runtimeFixture, { ...poisoned, pageCount: invalidPage })).toContain("pages=not-applicable");
+    }
+  });
 });

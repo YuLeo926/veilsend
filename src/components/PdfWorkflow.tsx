@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useReducer, useState } from "react";
+import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import {
   AlertTriangle,
@@ -173,6 +173,9 @@ export function PdfWorkflow({
   const [drawMode, setDrawMode] = useState(false);
   const [draft, setDraft] = useState<DrawDraft | null>(null);
   const [resizeDraft, setResizeDraft] = useState<ResizeDraft | null>(null);
+  const operationGeneration = useRef(0);
+
+  useEffect(() => () => { operationGeneration.current += 1; }, []);
 
   useEffect(() => {
     onDiagnosticsChange(derivePdfDiagnostics({
@@ -243,11 +246,13 @@ export function PdfWorkflow({
   }
 
   async function choosePdf() {
+    const token = ++operationGeneration.current;
     setBusy(true);
     onError("");
     try {
       await clearCurrentSession();
       const nextSession = await pickPdf();
+      if (operationGeneration.current !== token) return;
       if (!nextSession) return;
       setSession(nextSession);
       setDecisions(buildPdfDefaultDecisions(nextSession));
@@ -255,14 +260,16 @@ export function PdfWorkflow({
       setResult(null);
       onStageChange("review");
     } catch (error) {
+      if (operationGeneration.current !== token) return;
       onError(readableError(error), "inputRejected");
     } finally {
-      setBusy(false);
+      if (operationGeneration.current === token) setBusy(false);
     }
   }
 
   async function createSafetyCopy() {
     if (!session || busy) return;
+    const token = ++operationGeneration.current;
     setBusy(true);
     setDraft(null);
     setResizeDraft(null);
@@ -274,23 +281,27 @@ export function PdfWorkflow({
         Object.values(decisions),
         manualRegions,
       );
+      if (operationGeneration.current !== token) return;
       if (!nextResult) return;
       setResult(nextResult);
       onStageChange("result");
     } catch (error) {
+      if (operationGeneration.current !== token) return;
       onError(readableError(error), "workflowFailed");
     } finally {
-      setBusy(false);
+      if (operationGeneration.current === token) setBusy(false);
     }
   }
 
   async function startAgain() {
+    const token = ++operationGeneration.current;
     let clearError = "";
     try {
       await clearCurrentSession();
     } catch (error) {
       clearError = readableError(error);
     } finally {
+      if (operationGeneration.current !== token) return;
       setResult(null);
       onError(clearError, clearError ? "workflowFailed" : "none");
       onStageChange("add");
@@ -298,12 +309,15 @@ export function PdfWorkflow({
   }
 
   async function switchInputMode(mode: Exclude<InputMode, "pdf">) {
+    const token = ++operationGeneration.current;
     try {
       await clearCurrentSession();
       onError("");
     } catch (error) {
+      if (operationGeneration.current !== token) return;
       onError(readableError(error), "workflowFailed");
     } finally {
+      if (operationGeneration.current !== token) return;
       onSwitchMode(mode);
     }
   }

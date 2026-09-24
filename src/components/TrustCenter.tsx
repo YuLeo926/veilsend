@@ -36,6 +36,12 @@ export function TrustCenter({ open, onClose, runtimeInfo, runtimeState, workflow
     if (!open) return;
 
     const focusClose = window.setTimeout(() => closeButton.current?.focus(), 0);
+    return () => window.clearTimeout(focusClose);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape" && !isBusy) {
         event.preventDefault();
@@ -60,10 +66,7 @@ export function TrustCenter({ open, onClose, runtimeInfo, runtimeState, workflow
     };
 
     document.addEventListener("keydown", onKeyDown);
-    return () => {
-      window.clearTimeout(focusClose);
-      document.removeEventListener("keydown", onKeyDown);
-    };
+    return () => document.removeEventListener("keydown", onKeyDown);
   }, [isBusy, onClose, open]);
 
   useEffect(() => {

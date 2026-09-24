@@ -213,6 +213,8 @@ function App() {
   const [diagnosticError, setDiagnosticError] = useState<DiagnosticErrorCode>("none");
   const fileInput = useRef<HTMLInputElement>(null);
   const trustTrigger = useRef<HTMLButtonElement>(null);
+  const textOperationGeneration = useRef(0);
+  const currentMode = useRef<InputMode>("text");
 
   const options: ScanOptions = useMemo(() => ({
     maxBytes: MAX_BYTES,
@@ -276,6 +278,16 @@ function App() {
     detectors: activeDiagnostics.detectors,
   }), [activeDiagnostics, diagnosticError]);
 
+  function invalidateTextOperations(nextMode: InputMode) {
+    textOperationGeneration.current += 1;
+    currentMode.current = nextMode;
+    setBusy(false);
+  }
+
+  function isCurrentTextOperation(token: number): boolean {
+    return currentMode.current === "text" && textOperationGeneration.current === token;
+  }
+
   const buildIdentity = runtimeState === "loading"
     ? "Loading build identity"
     : runtimeInfo?.verifiedBuild
@@ -289,6 +301,7 @@ function App() {
       : ShieldAlert;
 
   async function acceptFile(file: File) {
+    const token = ++textOperationGeneration.current;
     setWorkflowError("");
     const extension = file.name.split(".").pop()?.toLowerCase() ?? "";
     if (!acceptedExtensions.includes(extension) && !file.name.startsWith(".env")) {
@@ -301,10 +314,12 @@ function App() {
     }
     try {
       const nextText = await file.text();
+      if (!isCurrentTextOperation(token)) return;
       if (nextText.includes("�")) throw new Error("This file does not appear to be valid UTF-8 text.");
       setText(nextText);
       setFilename(file.name);
     } catch (fileError) {
+      if (!isCurrentTextOperation(token)) return;
       setWorkflowError(readableError(fileError), "inputRejected");
     }
   }
@@ -314,10 +329,12 @@ function App() {
       setWorkflowError("Paste some text or choose a supported file first.", "inputRejected");
       return;
     }
+    const token = ++textOperationGeneration.current;
     setBusy(true);
     setWorkflowError("");
     try {
       const nextReport = await scanText(text, options);
+      if (!isCurrentTextOperation(token)) return;
       setReport(nextReport);
       setDecisions(Object.fromEntries(nextReport.findings.map((finding) => [finding.id, {
         id: finding.id,
@@ -327,14 +344,16 @@ function App() {
       setRevealed(new Set());
       setStage("review");
     } catch (scanError) {
+      if (!isCurrentTextOperation(token)) return;
       setWorkflowError(readableError(scanError));
     } finally {
-      setBusy(false);
+      if (isCurrentTextOperation(token)) setBusy(false);
     }
   }
 
   async function runClean() {
     if (!report) return;
+    const token = ++textOperationGeneration.current;
     setBusy(true);
     setWorkflowError("");
     try {
@@ -345,16 +364,19 @@ function App() {
         decisions: Object.values(decisions),
         options,
       });
+      if (!isCurrentTextOperation(token)) return;
       setResult(nextResult);
       setStage("result");
     } catch (cleanError) {
+      if (!isCurrentTextOperation(token)) return;
       setWorkflowError(readableError(cleanError));
     } finally {
-      setBusy(false);
+      if (isCurrentTextOperation(token)) setBusy(false);
     }
   }
 
   function reset() {
+    invalidateTextOperations("text");
     setStage("add");
     setMode("text");
     setText("");
@@ -370,6 +392,7 @@ function App() {
   }
 
   function switchMode(nextMode: InputMode) {
+    invalidateTextOperations(nextMode);
     setMode(nextMode);
     setStage("add");
     setWorkflowError("");
@@ -378,17 +401,21 @@ function App() {
 
   async function copyResult() {
     if (!result) return;
+    const token = textOperationGeneration.current;
     await navigator.clipboard.writeText(result.cleanedText);
+    if (!isCurrentTextOperation(token)) return;
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1800);
   }
 
   async function saveResult() {
     if (!result) return;
+    const token = ++textOperationGeneration.current;
     try {
       const path = await saveCleanedText(cleanedFilename(filename), result.cleanedText);
-      if (path) setSavedPath(path);
+      if (isCurrentTextOperation(token) && path) setSavedPath(path);
     } catch (saveError) {
+      if (!isCurrentTextOperation(token)) return;
       setWorkflowError(readableError(saveError), "saveFailed");
     }
   }

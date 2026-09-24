@@ -77,7 +77,7 @@ function validErrorCode(value: unknown): DiagnosticErrorCode {
 }
 
 function validPageCount(value: unknown): number | null {
-  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 && value <= 50 ? value : null;
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 1 && value <= 50 ? value : null;
 }
 
 export function bucketInputBytes(bytes: number | null): InputSizeBucket {
@@ -161,18 +161,26 @@ export function deriveImageDiagnostics(facts: ImageDiagnosticFacts): WorkflowDia
 
 export function derivePdfDiagnostics(facts: PdfDiagnosticFacts): WorkflowDiagnostics {
   if (facts.stage === "add") return { ...emptyWorkflowDiagnostics("pdf"), inputSizeBucket: bucketInputBytes(facts.inputBytes) };
-  const textScan = aggregateDetectorState(facts.pages, "textAvailability");
-  const faceScan = aggregateDetectorState(facts.pages, "faceAvailability");
-  const qrScan = aggregateDetectorState(facts.pages, "qrAvailability");
-  const barcodeScan = aggregateDetectorState(facts.pages, "barcodeAvailability");
+  const pageCount = validPageCount(facts.pageCount);
+  const hasPdfSessionEvidence = pageCount !== null && facts.pages.length === pageCount;
+  const textScan = hasPdfSessionEvidence ? aggregateDetectorState(facts.pages, "textAvailability") : "failed";
+  const faceScan = hasPdfSessionEvidence ? aggregateDetectorState(facts.pages, "faceAvailability") : "failed";
+  const qrScan = hasPdfSessionEvidence ? aggregateDetectorState(facts.pages, "qrAvailability") : "failed";
+  const barcodeScan = hasPdfSessionEvidence ? aggregateDetectorState(facts.pages, "barcodeAvailability") : "failed";
   const checks = facts.resultChecks;
-  const pdfCheck = checks === null ? null : checks.savedBytesMatch && checks.pageCountMatch && checks.pagesRendered === checks.pagesRebuilt;
+  const pdfCheck = checks === null ? null
+    : checks.savedBytesMatch === true
+      && checks.pageCountMatch === true
+      && checks.pagesRendered === pageCount
+      && checks.pagesRebuilt === pageCount;
   return {
-    inputKind: "pdf", workflowState: facts.stage, inputSizeBucket: bucketInputBytes(facts.inputBytes), pageCount: validPageCount(facts.pageCount), lastErrorCode: "none",
+    inputKind: "pdf", workflowState: facts.stage, inputSizeBucket: bucketInputBytes(facts.inputBytes), pageCount, lastErrorCode: "none",
     detectors: {
       text: diagnosticDetectorState(textScan, checks?.text ?? null), metadata: "notApplicable",
       face: diagnosticDetectorState(faceScan, checks?.face ?? null), qr: diagnosticDetectorState(qrScan, checks?.qr ?? null),
-      barcode: diagnosticDetectorState(barcodeScan, checks?.barcode ?? null), pdf: diagnosticDetectorState("complete", pdfCheck),
+      barcode: diagnosticDetectorState(barcodeScan, checks?.barcode ?? null), pdf: hasPdfSessionEvidence && (facts.stage !== "result" || checks !== null)
+        ? diagnosticDetectorState("complete", pdfCheck)
+        : "failed",
     },
   };
 }

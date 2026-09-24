@@ -174,6 +174,7 @@ describe("TrustCenter interaction contract", () => {
     expect(writeText).not.toHaveBeenCalled();
 
     const copy = getButton("Copy diagnostics");
+    copy.focus();
     await act(async () => { copy.click(); });
     expect(writeText).toHaveBeenCalledTimes(1);
     expect(writeText.mock.calls[0]?.[0]).toContain("VeilSend privacy-safe diagnostics");
@@ -184,7 +185,12 @@ describe("TrustCenter interaction contract", () => {
     await click(container.querySelector<HTMLButtonElement>('button[aria-label="Close trust center"]')!);
     expect(onClose).not.toHaveBeenCalled();
 
+    await settleFocus();
+    expect(document.activeElement).toBe(copy);
+
     await act(async () => { resolveClipboard?.(); await Promise.resolve(); });
+    await settleFocus();
+    expect(document.activeElement).toBe(copy);
     expect(container.textContent).toContain("Diagnostics copied to your clipboard. Nothing was saved or uploaded.");
     expect(container.textContent).not.toContain("pasted-text.txt");
   });
@@ -198,5 +204,28 @@ describe("TrustCenter interaction contract", () => {
     await act(async () => { await Promise.resolve(); });
     expect(container.textContent).toContain("Could not copy diagnostics. Check clipboard access and try again.");
     expect(container.textContent).not.toContain("clipboard token: private-value");
+  });
+
+  it("handles an unavailable clipboard API with generic feedback and leaves the dialog open", async () => {
+    vi.stubGlobal("navigator", {});
+    await render(<TrustCenter open runtimeInfo={runtimeInfo} runtimeState="loaded" workflowDiagnostics={workflowDiagnostics} onClose={vi.fn()} />);
+    await settleFocus();
+    await click(getButton("Copy diagnostics"));
+    await act(async () => { await Promise.resolve(); });
+    expect(container.querySelector('[role="dialog"]')).not.toBeNull();
+    expect(container.textContent).toContain("Could not copy diagnostics. Check clipboard access and try again.");
+  });
+
+  it("focuses close once per actual open, including after a close and reopen", async () => {
+    await render(<DialogHarness />);
+    const trigger = getButton("Open trust center");
+    await click(trigger);
+    await settleFocus();
+    const close = container.querySelector<HTMLButtonElement>('button[aria-label="Close trust center"]')!;
+    expect(document.activeElement).toBe(close);
+    await click(close);
+    await click(trigger);
+    await settleFocus();
+    expect(document.activeElement).toBe(container.querySelector('button[aria-label="Close trust center"]'));
   });
 });
