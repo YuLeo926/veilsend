@@ -37,15 +37,18 @@ import {
   remainingRiskCount,
 } from "../lib/imageWorkflowModel";
 import { deriveImageDiagnostics, type DiagnosticErrorCode, type WorkflowDiagnostics } from "../lib/diagnostics";
+import { imageVerificationReceipt } from "../lib/verificationReceipt";
 import type {
   Category,
   CleanedImageFile,
   ImageMetadataCategory,
   ImageSession,
   ImageRedactionDecision,
+  RuntimeInfo,
   Severity,
 } from "../lib/types";
 import { InputModeTabs, type InputMode } from "./InputModeTabs";
+import { VerificationReceipt } from "./VerificationReceipt";
 
 type Stage = "add" | "review" | "result";
 const cleanupFailureMessage = "Could not clear the previous image session. Restart VeilSend before choosing another image.";
@@ -97,12 +100,14 @@ export function ImageWorkflow({
   onSwitchMode,
   onError,
   onDiagnosticsChange,
+  runtimeInfo = null,
 }: {
   stage: Stage;
   onStageChange: (stage: Stage) => void;
   onSwitchMode: (mode: Exclude<InputMode, "image">) => void;
   onError: (message: string, code?: DiagnosticErrorCode) => void;
   onDiagnosticsChange: (next: WorkflowDiagnostics) => void;
+  runtimeInfo?: RuntimeInfo | null;
 }) {
   const [session, setSession] = useState<ImageSession | null>(null);
   const [result, setResult] = useState<CleanedImageFile | null>(null);
@@ -684,6 +689,8 @@ export function ImageWorkflow({
             <div className="saved-path"><Check size={14} /> Saved to {result.savedPath}</div>
           </div>
         </div>
+
+        <VerificationReceipt data={imageVerificationReceipt(runtimeInfo, result)} />
 
         <div className="result-footer">
           <button className="text-button" type="button" onClick={() => void startAgain()}><RefreshCcw size={15} /> Check another image</button>

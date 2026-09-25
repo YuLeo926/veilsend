@@ -39,6 +39,7 @@ import {
   type PdfFindingKind,
 } from "../lib/pdfWorkflowModel";
 import { derivePdfDiagnostics, type DiagnosticErrorCode, type WorkflowDiagnostics } from "../lib/diagnostics";
+import { pdfVerificationReceipt } from "../lib/verificationReceipt";
 import type {
   CleanedPdfFile,
   ImageRedactionDecision,
@@ -46,9 +47,11 @@ import type {
   PdfManualRegion,
   PdfPagePreview,
   PdfSession,
+  RuntimeInfo,
   Severity,
 } from "../lib/types";
 import { InputModeTabs, type InputMode } from "./InputModeTabs";
+import { VerificationReceipt } from "./VerificationReceipt";
 
 type Stage = "add" | "review" | "result";
 type DrawDraft = { originX: number; originY: number; rectangle: NormalizedRect };
@@ -150,12 +153,14 @@ export function PdfWorkflow({
   onSwitchMode,
   onError,
   onDiagnosticsChange,
+  runtimeInfo = null,
 }: {
   stage: Stage;
   onStageChange: (stage: Stage) => void;
   onSwitchMode: (mode: Exclude<InputMode, "pdf">) => void;
   onError: (message: string, code?: DiagnosticErrorCode) => void;
   onDiagnosticsChange: (next: WorkflowDiagnostics) => void;
+  runtimeInfo?: RuntimeInfo | null;
 }) {
   const [session, setSession] = useState<PdfSession | null>(null);
   const [result, setResult] = useState<CleanedPdfFile | null>(null);
@@ -721,6 +726,8 @@ export function PdfWorkflow({
           {withExceptions && <div className="exception-result"><AlertTriangle size={15} /> {result.exceptions} explicit Keep exception{result.exceptions === 1 ? "" : "s"}; those regions are not claimed safe.</div>}
           <div className="saved-path"><Check size={14} /> Saved to {result.savedPath}</div>
         </div>
+
+        <VerificationReceipt data={pdfVerificationReceipt(runtimeInfo, result)} />
 
         <div className="result-footer">
           <button className="text-button" type="button" onClick={() => void startAgain()}><RefreshCcw size={15} /> Process another PDF</button>

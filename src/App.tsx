@@ -32,6 +32,7 @@ import { ImageWorkflow } from "./components/ImageWorkflow";
 import { InputModeTabs, type InputMode } from "./components/InputModeTabs";
 import { PdfWorkflow } from "./components/PdfWorkflow";
 import { TrustCenter, type TrustRuntimeState } from "./components/TrustCenter";
+import { VerificationReceipt } from "./components/VerificationReceipt";
 import { getRuntimeInfo, isDesktop, sanitizeText, saveCleanedText, scanText } from "./lib/bridge";
 import {
   deriveTextDiagnostics,
@@ -40,6 +41,7 @@ import {
   type WorkflowDiagnostics,
 } from "./lib/diagnostics";
 import { syntheticSample } from "./lib/sample";
+import { textVerificationReceipt } from "./lib/verificationReceipt";
 import type {
   Category,
   Finding,
@@ -646,6 +648,10 @@ function App() {
                 {savedFile && <div className="save-confirmation"><Check size={14} /> Saved to {savedFile.savedPath}</div>}
               </div>
 
+              {savedFile && (
+                <VerificationReceipt data={textVerificationReceipt(runtimeInfo, savedFile, result, selectedCount)} />
+              )}
+
               <div className="result-footer">
                 <button className="text-button" type="button" onClick={reset}><RefreshCcw size={15} /> Scan something else</button>
                 <p><AlertTriangle size={14} /> VeilSend reduces accidental exposure; it cannot guarantee that content is safe.</p>
@@ -660,6 +666,7 @@ function App() {
               onSwitchMode={switchMode}
               onError={setWorkflowError}
               onDiagnosticsChange={onWorkflowDiagnosticsChange}
+              runtimeInfo={runtimeInfo}
             />
           )}
 
@@ -670,6 +677,7 @@ function App() {
               onSwitchMode={switchMode}
               onError={setWorkflowError}
               onDiagnosticsChange={onWorkflowDiagnosticsChange}
+              runtimeInfo={runtimeInfo}
             />
           )}
         </main>
