@@ -142,8 +142,8 @@ describe("runtime identity indicator", () => {
   it("does not attach an old saved-output identity after switching modes", async () => {
     const pending = deferred<SavedTextFile | null>();
     getRuntimeInfo.mockResolvedValueOnce(unverifiedRuntime);
-    scanText.mockResolvedValueOnce(scanReport);
-    sanitizeText.mockResolvedValueOnce({
+    scanText.mockResolvedValue(scanReport);
+    sanitizeText.mockResolvedValue({
       cleanedText: "safe text",
       verification: { status: "verified", remainingFindings: [], exceptions: 0, message: "Verified" },
     });
@@ -160,6 +160,9 @@ describe("runtime identity indicator", () => {
       cleanedSize: 9, savedFingerprint: "a".repeat(64),
     });
     await act(async () => { await Promise.resolve(); });
+    await setText("new text");
+    await act(async () => { button("Scan locally").click(); await Promise.resolve(); });
+    await act(async () => { button("Clean & verify").click(); await Promise.resolve(); });
     expect(container.textContent).not.toContain("old.cleaned.txt");
   });
 });
