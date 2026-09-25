@@ -69,40 +69,73 @@ afterEach(async () => {
 });
 
 describe("ImageWorkflow cancellation", () => {
-  it("returns to immediately usable add controls and ignores a cancelled clean completion while a new pick is pending", async () => {
+  it("waits for old-session cleanup before unlocking a new picker and ignores an old clean completion", async () => {
     const oldClean = deferred<CleanedImageFile | null>();
+    const oldCleanup = deferred<void>();
     const newPick = deferred<ImageSession | null>();
     const onError = vi.fn();
     cleanImageFile.mockReturnValueOnce(oldClean.promise);
+    clearImageSession.mockReturnValueOnce(oldCleanup.promise);
     await beginPendingClean(onError);
 
     await act(async () => { button("Choose a different image").click(); });
     expect(container.textContent).toContain("Inspect one image");
-    expect(button("Choose image").disabled).toBe(false);
-
-    pickImage.mockReturnValueOnce(newPick.promise);
-    await act(async () => { button("Choose image").click(); });
     expect(button("Choose image").disabled).toBe(true);
+
     oldClean.resolve(null);
     await act(async () => { await Promise.resolve(); });
     expect(button("Choose image").disabled).toBe(true);
+
+    oldCleanup.resolve();
+    await act(async () => { await Promise.resolve(); });
+    expect(button("Choose image").disabled).toBe(false);
+    pickImage.mockReturnValueOnce(newPick.promise);
+    await act(async () => { button("Choose image").click(); });
+    expect(button("Choose image").disabled).toBe(true);
+    newPick.resolve(session);
+    await act(async () => { await Promise.resolve(); });
+    expect(container.textContent).toContain("Image safety review");
+    expect(container.textContent).toContain("private.png");
     expect(onError).not.toHaveBeenCalledWith(expect.stringContaining("old"));
   });
 
-  it("does not surface a cancelled clean rejection or release a newer operation's busy state", async () => {
+  it("does not surface a cancelled clean rejection or clear a newly accepted session", async () => {
     const oldClean = deferred<CleanedImageFile | null>();
+    const oldCleanup = deferred<void>();
     const newPick = deferred<ImageSession | null>();
     const onError = vi.fn();
     cleanImageFile.mockReturnValueOnce(oldClean.promise);
+    clearImageSession.mockReturnValueOnce(oldCleanup.promise);
     await beginPendingClean(onError);
     await act(async () => { button("Choose a different image").click(); });
+    expect(button("Choose image").disabled).toBe(true);
+    oldCleanup.resolve();
+    await act(async () => { await Promise.resolve(); });
     pickImage.mockReturnValueOnce(newPick.promise);
     await act(async () => { button("Choose image").click(); });
+    newPick.resolve(session);
+    await act(async () => { await Promise.resolve(); });
 
     oldClean.reject(new Error("old clean failure"));
     await act(async () => { await Promise.resolve(); });
-    expect(button("Choose image").disabled).toBe(true);
     expect(onError).not.toHaveBeenCalledWith(expect.stringContaining("old clean failure"));
-    expect(container.textContent).toContain("Inspect one image");
+    expect(container.textContent).toContain("Image safety review");
+    expect(container.textContent).toContain("private.png");
+  });
+
+  it("keeps image selection blocked with fixed feedback when old-session cleanup fails", async () => {
+    const oldClean = deferred<CleanedImageFile | null>();
+    const oldCleanup = deferred<void>();
+    const onError = vi.fn();
+    cleanImageFile.mockReturnValueOnce(oldClean.promise);
+    clearImageSession.mockReturnValueOnce(oldCleanup.promise);
+    await beginPendingClean(onError);
+    await act(async () => { button("Choose a different image").click(); });
+
+    oldCleanup.reject(new Error("C:\\private\\cleanup failure"));
+    await act(async () => { await Promise.resolve(); });
+    expect(button("Choose image").disabled).toBe(true);
+    expect(onError).toHaveBeenCalledWith("Could not clear the previous image session. Restart VeilSend before choosing another image.", "workflowFailed");
+    expect(onError).not.toHaveBeenCalledWith(expect.stringContaining("private"));
   });
 });

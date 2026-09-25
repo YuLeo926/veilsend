@@ -48,6 +48,7 @@ import type {
 import { InputModeTabs, type InputMode } from "./InputModeTabs";
 
 type Stage = "add" | "review" | "result";
+const cleanupFailureMessage = "Could not clear the previous image session. Restart VeilSend before choosing another image.";
 
 const severityLabel: Record<Severity, string> = {
   low: "Notice",
@@ -170,25 +171,31 @@ export function ImageWorkflow({
     onStageChange("review");
   }
 
-  async function clearCurrentSession() {
+  async function clearCurrentSession(token?: number) {
     if (!session) return;
-    await clearImageSession();
+    try {
+      await clearImageSession();
+    } catch {
+      throw new Error(cleanupFailureMessage);
+    }
+    if (token !== undefined && operationGeneration.current !== token) return;
     setSession(null);
     setDecisions({});
   }
 
   function cancelCurrentOperation(): number {
     const token = ++operationGeneration.current;
-    setBusy(false);
+    setBusy(true);
     return token;
   }
 
   async function chooseImage() {
+    if (busy) return;
     const token = ++operationGeneration.current;
     setBusy(true);
     onError("");
     try {
-      await clearCurrentSession();
+      await clearCurrentSession(token);
       const nextSession = await pickImage();
       if (operationGeneration.current !== token) return;
       if (!nextSession) return;
@@ -202,11 +209,12 @@ export function ImageWorkflow({
   }
 
   async function pasteScreenshot() {
+    if (busy) return;
     const token = ++operationGeneration.current;
     setBusy(true);
     onError("");
     try {
-      await clearCurrentSession();
+      await clearCurrentSession(token);
       const nextSession = await pasteImage();
       if (operationGeneration.current !== token) return;
       acceptSession(nextSession);
@@ -242,29 +250,35 @@ export function ImageWorkflow({
 
   async function startAgain() {
     const token = cancelCurrentOperation();
-    const clear = clearCurrentSession();
+    const clear = clearCurrentSession(token);
     setResult(null);
     onError("");
     onStageChange("add");
     try {
       await clear;
     } catch (error) {
-      if (operationGeneration.current === token) onError(readableError(error), "workflowFailed");
+      if (operationGeneration.current === token) {
+        onError(cleanupFailureMessage, "workflowFailed");
+        return;
+      }
+      return;
     }
+    if (operationGeneration.current === token) setBusy(false);
   }
 
   async function switchInputMode(mode: Exclude<InputMode, "image">) {
     const token = cancelCurrentOperation();
     try {
-      await clearCurrentSession();
-      onError("");
+      await clearCurrentSession(token);
     } catch (error) {
       if (operationGeneration.current !== token) return;
-      onError(readableError(error), "workflowFailed");
-    } finally {
-      if (operationGeneration.current !== token) return;
-      onSwitchMode(mode);
+      onError(cleanupFailureMessage, "workflowFailed");
+      return;
     }
+    if (operationGeneration.current !== token) return;
+    setBusy(false);
+    onError("");
+    onSwitchMode(mode);
   }
 
   if (stage === "add") {

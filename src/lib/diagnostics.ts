@@ -119,6 +119,22 @@ function detectorStateFromAvailability(availability: DetectorAvailability | null
   return "notRun";
 }
 
+function isDetectorAvailability(value: unknown): value is DetectorAvailability {
+  return value === "available" || value === "unavailable" || value === "needsReview";
+}
+
+function hasValidPdfPageFacts(pages: readonly PdfPageDiagnosticFacts[], pageCount: number | null): boolean {
+  if (pageCount === null || pages.length !== pageCount) return false;
+  for (const page of pages) {
+    if (!page || typeof page !== "object") return false;
+    if (!isDetectorAvailability(page.textAvailability)) return false;
+    if (!isDetectorAvailability(page.faceAvailability)) return false;
+    if (!isDetectorAvailability(page.qrAvailability)) return false;
+    if (!isDetectorAvailability(page.barcodeAvailability)) return false;
+  }
+  return true;
+}
+
 function aggregateDetectorState(
   pages: readonly PdfPageDiagnosticFacts[],
   key: "textAvailability" | "faceAvailability" | "qrAvailability" | "barcodeAvailability",
@@ -166,7 +182,7 @@ export function deriveImageDiagnostics(facts: ImageDiagnosticFacts): WorkflowDia
 export function derivePdfDiagnostics(facts: PdfDiagnosticFacts): WorkflowDiagnostics {
   if (facts.stage === "add") return { ...emptyWorkflowDiagnostics("pdf"), inputSizeBucket: bucketInputBytes(facts.inputBytes) };
   const pageCount = validPageCount(facts.pageCount);
-  const hasPdfSessionEvidence = hasValidPdfInputBytes(facts.inputBytes) && pageCount !== null && facts.pages.length === pageCount;
+  const hasPdfSessionEvidence = hasValidPdfInputBytes(facts.inputBytes) && hasValidPdfPageFacts(facts.pages, pageCount);
   const textScan = hasPdfSessionEvidence ? aggregateDetectorState(facts.pages, "textAvailability") : "failed";
   const faceScan = hasPdfSessionEvidence ? aggregateDetectorState(facts.pages, "faceAvailability") : "failed";
   const qrScan = hasPdfSessionEvidence ? aggregateDetectorState(facts.pages, "qrAvailability") : "failed";

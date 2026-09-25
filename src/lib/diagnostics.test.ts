@@ -120,8 +120,21 @@ describe("privacy-safe diagnostics", () => {
       expect(diagnostics.detectors.pdf, `${stage}/${inputBytes}`).toBe("failed");
     }
 
-    const valid = derivePdfDiagnostics({ stage: "review", inputBytes: 1, pageCount: 1, pages, resultChecks: null });
+    const valid = derivePdfDiagnostics({ stage: "review", inputBytes: 50 * 1024 * 1024, pageCount: 1, pages, resultChecks: null });
     expect(valid.detectors.pdf).toBe("complete");
+    const validResult = derivePdfDiagnostics({
+      stage: "result", inputBytes: 50 * 1024 * 1024, pageCount: 1, pages,
+      resultChecks: { savedBytesMatch: true, pageCountMatch: true, pagesRendered: 1, pagesRebuilt: 1, text: true, face: true, qr: true, barcode: true },
+    });
+    expect(validResult.detectors.pdf).toBe("complete");
+    const oversizedResult = derivePdfDiagnostics({
+      stage: "result", inputBytes: 50 * 1024 * 1024 + 1, pageCount: 1, pages,
+      resultChecks: { savedBytesMatch: true, pageCountMatch: true, pagesRendered: 1, pagesRebuilt: 1, text: true, face: true, qr: true, barcode: true },
+    });
+    expect(oversizedResult.detectors.pdf).toBe("failed");
+
+    const malformedPages = [{ textAvailability: "available", faceAvailability: "unknown", qrAvailability: "available", barcodeAvailability: "available" }] as unknown as typeof pages;
+    expect(derivePdfDiagnostics({ stage: "review", inputBytes: 1, pageCount: 1, pages: malformedPages, resultChecks: null }).detectors.pdf).toBe("failed");
   });
 
   it("normalizes poisoned closed values and invalid page counts without outputting their values", () => {
