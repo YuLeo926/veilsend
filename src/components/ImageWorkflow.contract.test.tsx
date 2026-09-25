@@ -4,10 +4,23 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ImageWorkflow } from "./ImageWorkflow";
 import type { CleanedImageFile, ImageSession } from "../lib/types";
+import { InputModeTabs, type InputMode } from "./InputModeTabs";
 
 const cleanImageFile = vi.hoisted(() => vi.fn());
 const clearImageSession = vi.hoisted(() => vi.fn());
 const pickImage = vi.hoisted(() => vi.fn());
+const modeCallbacks = vi.hoisted(() => ({ current: null as ((mode: InputMode) => void) | null }));
+
+vi.mock("./InputModeTabs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./InputModeTabs")>();
+  return {
+    ...actual,
+    InputModeTabs: (props: Parameters<typeof actual.InputModeTabs>[0]) => {
+      modeCallbacks.current = props.onChange;
+      return <actual.InputModeTabs {...props} />;
+    },
+  };
+});
 
 vi.mock("../lib/bridge", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/bridge")>();
@@ -40,9 +53,13 @@ function button(label: string) {
   return target as HTMLButtonElement;
 }
 
-function Harness({ onError }: { onError: (message: string) => void }) {
+function Harness({ onError, onInputModeChange = vi.fn() }: { onError: (message: string) => void; onInputModeChange?: (mode: InputMode) => void }) {
   const [stage, setStage] = useState<Stage>("add");
-  return <ImageWorkflow stage={stage} onStageChange={setStage} onSwitchMode={vi.fn()} onError={onError} onDiagnosticsChange={vi.fn()} />;
+  const [mode, setMode] = useState<InputMode>("image");
+  const switchMode = (next: InputMode) => { onInputModeChange(next); setMode(next); setStage("add"); };
+  return mode === "image"
+    ? <ImageWorkflow stage={stage} onStageChange={setStage} onSwitchMode={switchMode} onError={onError} onDiagnosticsChange={vi.fn()} />
+    : <InputModeTabs active={mode} onChange={switchMode} />;
 }
 
 async function beginPendingClean(onError: (message: string) => void) {
@@ -69,6 +86,66 @@ afterEach(async () => {
 });
 
 describe("ImageWorkflow cancellation", () => {
+  it("serializes restart and mode changes, including stale and reentrant callbacks", async () => {
+    const oldCleanup = deferred<void>();
+    const onInputModeChange = vi.fn();
+    let backendSession: ImageSession | null = session;
+    clearImageSession.mockImplementationOnce(async () => { await oldCleanup.promise; backendSession = null; });
+    pickImage.mockResolvedValueOnce(session);
+    await act(async () => { root.render(<Harness onError={vi.fn()} onInputModeChange={onInputModeChange} />); });
+    const staleModeChange = modeCallbacks.current!;
+    await act(async () => { button("Choose image").click(); });
+    await act(async () => {
+      const restart = button("Choose a different image");
+      restart.click();
+      restart.click();
+      staleModeChange("text");
+    });
+
+    const tabs = Array.from(container.querySelectorAll<HTMLButtonElement>(".mode-tabs button"));
+    expect(tabs).toHaveLength(3);
+    expect(tabs.every((tab) => tab.disabled)).toBe(true);
+    await act(async () => {
+      tabs.forEach((tab) => tab.click());
+      modeCallbacks.current!("pdf");
+      staleModeChange("text");
+    });
+    expect(onInputModeChange).not.toHaveBeenCalled();
+    expect(clearImageSession).toHaveBeenCalledTimes(1);
+
+    await act(async () => { oldCleanup.resolve(); });
+    expect(tabs.every((tab) => !tab.disabled)).toBe(true);
+    await act(async () => {
+      const switchMode = modeCallbacks.current!;
+      button("Text & logs").click();
+      switchMode("pdf");
+    });
+    expect(clearImageSession).toHaveBeenCalledTimes(1);
+    expect(onInputModeChange.mock.calls).toEqual([["text"]]);
+
+    await act(async () => { button("Images").click(); });
+    const newSession = { ...session, sessionId: "session-2", filename: "new.png" };
+    pickImage.mockImplementationOnce(async () => { backendSession = newSession; return newSession; });
+    await act(async () => { button("Choose image").click(); });
+    expect(container.textContent).toContain("new.png");
+    expect(backendSession).toBe(newSession);
+    expect(clearImageSession).toHaveBeenCalledTimes(1);
+  });
+
+  it("blocks mode changes while a picker is busy even before a render", async () => {
+    const pendingPick = deferred<ImageSession | null>();
+    const onInputModeChange = vi.fn();
+    pickImage.mockReturnValueOnce(pendingPick.promise);
+    await act(async () => { root.render(<Harness onError={vi.fn()} onInputModeChange={onInputModeChange} />); });
+    const switchMode = modeCallbacks.current!;
+    await act(async () => { button("Choose image").click(); switchMode("text"); });
+    expect(button("Text & logs").disabled).toBe(true);
+    expect(onInputModeChange).not.toHaveBeenCalled();
+    expect(clearImageSession).not.toHaveBeenCalled();
+    await act(async () => { pendingPick.resolve(null); });
+    expect(button("Text & logs").disabled).toBe(false);
+  });
+
   it("waits for old-session cleanup before unlocking a new picker and ignores an old clean completion", async () => {
     const oldClean = deferred<CleanedImageFile | null>();
     const oldCleanup = deferred<void>();
@@ -137,5 +214,12 @@ describe("ImageWorkflow cancellation", () => {
     expect(button("Choose image").disabled).toBe(true);
     expect(onError).toHaveBeenCalledWith("Could not clear the previous image session. Restart VeilSend before choosing another image.", "workflowFailed");
     expect(onError).not.toHaveBeenCalledWith(expect.stringContaining("private"));
+    const switchMode = modeCallbacks.current!;
+    expect(button("Text & logs").disabled).toBe(true);
+    expect(button("Images").disabled).toBe(true);
+    expect(button("PDF").disabled).toBe(true);
+    await act(async () => { button("Text & logs").click(); switchMode("pdf"); });
+    expect(container.textContent).toContain("Inspect one image");
+    expect(clearImageSession).toHaveBeenCalledTimes(1);
   });
 });

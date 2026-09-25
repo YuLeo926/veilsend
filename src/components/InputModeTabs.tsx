@@ -5,9 +5,11 @@ export type InputMode = "text" | "image" | "pdf";
 export function InputModeTabs({
   active,
   onChange,
+  disabled = false,
 }: {
   active: InputMode;
   onChange: (mode: InputMode) => void;
+  disabled?: boolean;
 }) {
   return (
     <div className="mode-tabs" aria-label="Content type">
@@ -15,7 +17,8 @@ export function InputModeTabs({
         type="button"
         className={active === "text" ? "active" : ""}
         aria-pressed={active === "text"}
-        onClick={() => onChange("text")}
+        disabled={disabled}
+        onClick={() => !disabled && onChange("text")}
       >
         <FileText size={16} /> Text & logs
       </button>
@@ -23,7 +26,8 @@ export function InputModeTabs({
         type="button"
         className={active === "image" ? "active" : ""}
         aria-pressed={active === "image"}
-        onClick={() => onChange("image")}
+        disabled={disabled}
+        onClick={() => !disabled && onChange("image")}
       >
         <ImageIcon size={16} /> Images
         <span>NEW</span>
@@ -32,7 +36,8 @@ export function InputModeTabs({
         type="button"
         className={active === "pdf" ? "active" : ""}
         aria-pressed={active === "pdf"}
-        onClick={() => onChange("pdf")}
+        disabled={disabled}
+        onClick={() => !disabled && onChange("pdf")}
       >
         <FileStack size={16} /> PDF
         <span>NEW</span>

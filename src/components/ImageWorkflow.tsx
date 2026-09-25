@@ -108,6 +108,8 @@ export function ImageWorkflow({
   const [result, setResult] = useState<CleanedImageFile | null>(null);
   const [decisions, setDecisions] = useState<Record<string, ImageRedactionDecision>>({});
   const [busy, setBusy] = useState(false);
+  // Synchronous gate also covers reentrant calls before React renders disabled controls.
+  const operationState = useRef<"idle" | "working" | "cleanup">("idle");
   const operationGeneration = useRef(0);
 
   useEffect(() => () => { operationGeneration.current += 1; }, []);
@@ -183,16 +185,21 @@ export function ImageWorkflow({
     setDecisions({});
   }
 
+  function setOperationState(next: "idle" | "working" | "cleanup") {
+    operationState.current = next;
+    setBusy(next !== "idle");
+  }
+
   function cancelCurrentOperation(): number {
     const token = ++operationGeneration.current;
-    setBusy(true);
+    setOperationState("cleanup");
     return token;
   }
 
   async function chooseImage() {
-    if (busy) return;
+    if (operationState.current !== "idle") return;
     const token = ++operationGeneration.current;
-    setBusy(true);
+    setOperationState("working");
     onError("");
     try {
       await clearCurrentSession(token);
@@ -204,14 +211,14 @@ export function ImageWorkflow({
       if (operationGeneration.current !== token) return;
       onError(readableError(error), "inputRejected");
     } finally {
-      if (operationGeneration.current === token) setBusy(false);
+      if (operationGeneration.current === token) setOperationState("idle");
     }
   }
 
   async function pasteScreenshot() {
-    if (busy) return;
+    if (operationState.current !== "idle") return;
     const token = ++operationGeneration.current;
-    setBusy(true);
+    setOperationState("working");
     onError("");
     try {
       await clearCurrentSession(token);
@@ -222,14 +229,14 @@ export function ImageWorkflow({
       if (operationGeneration.current !== token) return;
       onError(readableError(error), "inputRejected");
     } finally {
-      if (operationGeneration.current === token) setBusy(false);
+      if (operationGeneration.current === token) setOperationState("idle");
     }
   }
 
   async function createCleanCopy() {
-    if (!session) return;
+    if (!session || operationState.current !== "idle") return;
     const token = ++operationGeneration.current;
-    setBusy(true);
+    setOperationState("working");
     onError("");
     try {
       const nextResult = await cleanImageFile(
@@ -244,11 +251,12 @@ export function ImageWorkflow({
       if (operationGeneration.current !== token) return;
       onError(readableError(error), "workflowFailed");
     } finally {
-      if (operationGeneration.current === token) setBusy(false);
+      if (operationGeneration.current === token) setOperationState("idle");
     }
   }
 
   async function startAgain() {
+    if (operationState.current === "cleanup") return;
     const token = cancelCurrentOperation();
     const clear = clearCurrentSession(token);
     setResult(null);
@@ -263,10 +271,11 @@ export function ImageWorkflow({
       }
       return;
     }
-    if (operationGeneration.current === token) setBusy(false);
+    if (operationGeneration.current === token) setOperationState("idle");
   }
 
   async function switchInputMode(mode: Exclude<InputMode, "image">) {
+    if (operationState.current !== "idle") return;
     const token = cancelCurrentOperation();
     try {
       await clearCurrentSession(token);
@@ -276,7 +285,7 @@ export function ImageWorkflow({
       return;
     }
     if (operationGeneration.current !== token) return;
-    setBusy(false);
+    setOperationState("idle");
     onError("");
     onSwitchMode(mode);
   }
@@ -284,7 +293,7 @@ export function ImageWorkflow({
   if (stage === "add") {
     return (
       <section className="stage-view add-stage image-add-stage">
-        <InputModeTabs active="image" onChange={(mode) => mode !== "image" && void switchInputMode(mode)} />
+        <InputModeTabs active="image" disabled={busy} onChange={(mode) => mode !== "image" && void switchInputMode(mode)} />
         <div className="eyebrow"><Fingerprint size={15} /> Five local image checks</div>
         <h1>Find what the image<br />should not reveal.</h1>
         <p className="lead">Choose a JPEG or PNG, or paste a screenshot. VeilSend checks visible text, faces, QR codes, one-dimensional barcodes, and hidden metadata—all locally.</p>
