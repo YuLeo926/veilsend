@@ -69,9 +69,12 @@ function safeStatus(value: unknown): VerificationStatus {
 function normalizedStatus(data: VerificationReceiptData, kind: ReceiptOutputKind): VerificationStatus {
   const candidate = safeStatus(data.status);
   const detectorsComplete = requiredDetectors[kind].every((key) => safeDetectorState(data.detectors[key]) === "complete");
-  if (!detectorsComplete || safeCount(data.remainingFindings) > 0) return "needsReview";
-  if (safeCount(data.exceptions) > 0) return candidate === "needsReview" ? "needsReview" : "cleanedWithExceptions";
-  return candidate;
+  if (!detectorsComplete || candidate === "needsReview") return "needsReview";
+  // Kept exceptions are expected to be found again. Preserve only the backend's
+  // explicit exception classification; never infer it from counts alone.
+  if (candidate === "cleanedWithExceptions") return "cleanedWithExceptions";
+  if (safeCount(data.remainingFindings) > 0 || safeCount(data.exceptions) > 0) return "needsReview";
+  return "verified";
 }
 
 function buildIdentity(runtime: RuntimeInfo | null): Pick<VerificationReceiptData, "appVersion" | "commit"> {

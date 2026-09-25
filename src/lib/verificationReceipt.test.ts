@@ -63,6 +63,20 @@ describe("verification receipt formatting", () => {
     expect(receipt).toContain("status=needsReview");
     expect(receipt).not.toContain("status=verified");
   });
+
+  it("never upgrades needsReview or infers an exception status from counts", () => {
+    const backendReview = formatVerificationReceipt({ ...receiptFixture, status: "needsReview" });
+    expect(backendReview).toContain("status=needsReview");
+
+    const inconsistentVerified = formatVerificationReceipt({
+      ...receiptFixture,
+      status: "verified",
+      exceptions: 1,
+      remainingFindings: 1,
+    });
+    expect(inconsistentVerified).toContain("status=needsReview");
+    expect(inconsistentVerified).not.toContain("status=cleanedWithExceptions");
+  });
 });
 
 describe("saved result adapters", () => {
@@ -73,6 +87,25 @@ describe("saved result adapters", () => {
     expect(receipt.outputFingerprint).toBe(saved.savedFingerprint);
     expect(receipt).not.toHaveProperty("savedPath");
     expect(receipt).not.toHaveProperty("filename");
+  });
+
+  it("preserves a backend-confirmed text exception with a remaining finding", () => {
+    const saved: SavedTextFile = { savedPath: "ignored", filename: "ignored", cleanedSize: 9, savedFingerprint: "f".repeat(64) };
+    const result: SanitizeResult = {
+      cleanedText: "kept value",
+      verification: {
+        status: "cleanedWithExceptions",
+        remainingFindings: [{ id: "kept" } as SanitizeResult["verification"]["remainingFindings"][number]],
+        exceptions: 1,
+        message: "ignored",
+      },
+    };
+    const receipt = textVerificationReceipt(runtime, saved, result, 0);
+    expect(receipt.detectors.text).toBe("complete");
+    expect(receipt.remainingFindings).toBe(1);
+    expect(receipt.exceptions).toBe(1);
+    expect(receipt.status).toBe("cleanedWithExceptions");
+    expect(formatVerificationReceipt(receipt)).toContain("status=cleanedWithExceptions");
   });
 
   it("directly maps CleanedImageFile.savedFingerprint and downgrades incomplete checks", () => {
@@ -99,6 +132,22 @@ describe("saved result adapters", () => {
     expect(receipt.status).toBe("needsReview");
   });
 
+  it("preserves a backend-confirmed image exception when every detector completed", () => {
+    const result: CleanedImageFile = {
+      savedPath: "ignored", filename: "ignored", savedFingerprint: "1".repeat(64), previewDataUrl: "ignored",
+      originalBytes: 20, cleanedSize: 10, removedMetadataFindings: 0, redactedFindings: 0, redactedTextFindings: 0,
+      redactedQrFindings: 0, redactedFaceFindings: 0, redactedBarcodeFindings: 0, redactedRegions: 0, exceptions: 1,
+      verification: { status: "cleanedWithExceptions", metadataRemaining: 0, visualFindingsRemaining: 1, ocrChecked: true,
+        qrCodesRemaining: 0, qrChecked: true, facesRemaining: 0, faceChecked: true, barcodesRemaining: 0,
+        barcodeChecked: true, pixelsUnchanged: true, message: "ignored" },
+    };
+    const receipt = imageVerificationReceipt(runtime, result);
+    expect(Object.values(receipt.detectors).filter((state) => state !== "notApplicable")).toEqual(["complete", "complete", "complete", "complete", "complete"]);
+    expect(receipt.remainingFindings).toBe(1);
+    expect(receipt.exceptions).toBe(1);
+    expect(receipt.status).toBe("cleanedWithExceptions");
+  });
+
   it("directly maps CleanedPdfFile.savedFingerprint and its final-file checks", () => {
     const result: CleanedPdfFile = {
       savedPath: "C:\\private\\safe.pdf", filename: "safe.pdf", savedFingerprint: "d".repeat(64), originalBytes: 30, cleanedSize: 12,
@@ -114,5 +163,21 @@ describe("saved result adapters", () => {
     expect(receipt.pages).toBe(2);
     expect(receipt).not.toHaveProperty("savedPath");
     expect(receipt).not.toHaveProperty("filename");
+  });
+
+  it("preserves a backend-confirmed PDF exception when every detector completed", () => {
+    const result: CleanedPdfFile = {
+      savedPath: "ignored", filename: "ignored", savedFingerprint: "2".repeat(64), originalBytes: 30, cleanedSize: 12,
+      pagesRebuilt: 2, redactedFindings: 0, redactedTextFindings: 0, redactedFaceFindings: 0, redactedQrFindings: 0,
+      redactedBarcodeFindings: 0, manualRegions: 0, redactedRegions: 0, exceptions: 1,
+      verification: { status: "cleanedWithExceptions", savedBytesMatch: true, pageCountMatch: true, pagesRendered: 2,
+        visualFindingsRemaining: 1, ocrChecked: true, facesRemaining: 0, faceChecked: true, qrCodesRemaining: 0,
+        qrChecked: true, barcodesRemaining: 0, barcodeChecked: true, message: "ignored" },
+    };
+    const receipt = pdfVerificationReceipt(runtime, result);
+    expect(receipt.detectors.pdf).toBe("complete");
+    expect(receipt.remainingFindings).toBe(1);
+    expect(receipt.exceptions).toBe(1);
+    expect(receipt.status).toBe("cleanedWithExceptions");
   });
 });
