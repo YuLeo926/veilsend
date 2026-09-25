@@ -77,6 +77,42 @@ describe("verification receipt formatting", () => {
     expect(inconsistentVerified).toContain("status=needsReview");
     expect(inconsistentVerified).not.toContain("status=cleanedWithExceptions");
   });
+
+  it.each([
+    { exceptions: 0, remainingFindings: 1 },
+    { exceptions: 1, remainingFindings: 2 },
+    { exceptions: 1, remainingFindings: Number.NaN },
+  ])("rejects an impossible backend exception count pair: $exceptions/$remainingFindings", ({ exceptions, remainingFindings }) => {
+    const receipt = formatVerificationReceipt({
+      ...receiptFixture,
+      status: "cleanedWithExceptions",
+      exceptions,
+      remainingFindings,
+    });
+    expect(receipt).toContain("status=needsReview");
+  });
+
+  it("allows fewer remaining findings than explicit exceptions", () => {
+    const receipt = formatVerificationReceipt({
+      ...receiptFixture,
+      status: "cleanedWithExceptions",
+      exceptions: 1,
+      remainingFindings: 0,
+    });
+    expect(receipt).toContain("status=cleanedWithExceptions");
+  });
+
+  it("does not let exception status bypass a missing required detector", () => {
+    const receipt = formatVerificationReceipt({
+      ...receiptFixture,
+      status: "cleanedWithExceptions",
+      exceptions: 1,
+      remainingFindings: 1,
+      detectors: { ...receiptFixture.detectors, text: undefined },
+    });
+    expect(receipt).toContain("status=needsReview");
+    expect(receipt).toContain("detector_text=incomplete");
+  });
 });
 
 describe("saved result adapters", () => {
@@ -106,6 +142,21 @@ describe("saved result adapters", () => {
     expect(receipt.exceptions).toBe(1);
     expect(receipt.status).toBe("cleanedWithExceptions");
     expect(formatVerificationReceipt(receipt)).toContain("status=cleanedWithExceptions");
+  });
+
+  it("does not let the text adapter bypass impossible exception counts", () => {
+    const saved: SavedTextFile = { savedPath: "ignored", filename: "ignored", cleanedSize: 9, savedFingerprint: "0".repeat(64) };
+    const keptFinding = { id: "kept" } as SanitizeResult["verification"]["remainingFindings"][number];
+    const result: SanitizeResult = {
+      cleanedText: "kept values",
+      verification: {
+        status: "cleanedWithExceptions",
+        remainingFindings: [keptFinding, { ...keptFinding, id: "unexpected" }],
+        exceptions: 1,
+        message: "ignored",
+      },
+    };
+    expect(textVerificationReceipt(runtime, saved, result, 0).status).toBe("needsReview");
   });
 
   it("directly maps CleanedImageFile.savedFingerprint and downgrades incomplete checks", () => {

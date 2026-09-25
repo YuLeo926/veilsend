@@ -45,8 +45,12 @@ function safeCommit(value: unknown): string {
     : "unverified";
 }
 
+function isValidCount(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
 function safeCount(value: unknown): number {
-  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : 0;
+  return isValidCount(value) ? value : 0;
 }
 
 function safePages(value: unknown): number | null {
@@ -70,11 +74,17 @@ function normalizedStatus(data: VerificationReceiptData, kind: ReceiptOutputKind
   const candidate = safeStatus(data.status);
   const detectorsComplete = requiredDetectors[kind].every((key) => safeDetectorState(data.detectors[key]) === "complete");
   if (!detectorsComplete || candidate === "needsReview") return "needsReview";
-  // Kept exceptions are expected to be found again. Preserve only the backend's
-  // explicit exception classification; never infer it from counts alone.
-  if (candidate === "cleanedWithExceptions") return "cleanedWithExceptions";
-  if (safeCount(data.remainingFindings) > 0 || safeCount(data.exceptions) > 0) return "needsReview";
-  return "verified";
+  const countsAreValid = isValidCount(data.exceptions) && isValidCount(data.remainingFindings);
+  if (!countsAreValid) return "needsReview";
+  if (candidate === "cleanedWithExceptions") {
+    // All three backend classifiers require at least one explicit Keep exception.
+    // A saved re-scan may find fewer of them again, but never more findings than
+    // the number of approved exceptions.
+    return data.exceptions > 0 && data.remainingFindings <= data.exceptions
+      ? "cleanedWithExceptions"
+      : "needsReview";
+  }
+  return data.exceptions === 0 && data.remainingFindings === 0 ? "verified" : "needsReview";
 }
 
 function buildIdentity(runtime: RuntimeInfo | null): Pick<VerificationReceiptData, "appVersion" | "commit"> {
