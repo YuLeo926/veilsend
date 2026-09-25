@@ -139,15 +139,19 @@ describe("runtime identity indicator", () => {
     expect(container.textContent).not.toContain("old private failure");
   });
 
-  it("does not attach an old saved-output identity after switching modes", async () => {
+  it.each(["resolve", "reject"] as const)("does not attach an old %s save after a newer saved result", async (oldCompletion) => {
     const pending = deferred<SavedTextFile | null>();
+    const newSaved: SavedTextFile = {
+      savedPath: "C:\\private\\new.cleaned.txt", filename: "new.cleaned.txt",
+      cleanedSize: 9, savedFingerprint: "b".repeat(64),
+    };
     getRuntimeInfo.mockResolvedValueOnce(unverifiedRuntime);
     scanText.mockResolvedValue(scanReport);
     sanitizeText.mockResolvedValue({
       cleanedText: "safe text",
       verification: { status: "verified", remainingFindings: [], exceptions: 0, message: "Verified" },
     });
-    saveCleanedText.mockReturnValueOnce(pending.promise);
+    saveCleanedText.mockReturnValueOnce(pending.promise).mockResolvedValueOnce(newSaved);
     await act(async () => { root.render(<App />); await Promise.resolve(); });
     await setText("first");
     await act(async () => { button("Scan locally").click(); await Promise.resolve(); });
@@ -155,14 +159,25 @@ describe("runtime identity indicator", () => {
     await act(async () => { button("Save clean copy").click(); });
     await act(async () => { button("Scan something else").click(); });
     await act(async () => { button("PDF").click(); button("Text & logs").click(); });
-    pending.resolve({
-      savedPath: "C:\\private\\old.cleaned.txt", filename: "old.cleaned.txt",
-      cleanedSize: 9, savedFingerprint: "a".repeat(64),
-    });
-    await act(async () => { await Promise.resolve(); });
     await setText("new text");
     await act(async () => { button("Scan locally").click(); await Promise.resolve(); });
     await act(async () => { button("Clean & verify").click(); await Promise.resolve(); });
+    await act(async () => { button("Save clean copy").click(); await Promise.resolve(); });
+    expect(container.textContent).toContain(newSaved.savedPath);
+
+    if (oldCompletion === "resolve") {
+      pending.resolve({
+        savedPath: "C:\\private\\old.cleaned.txt", filename: "old.cleaned.txt",
+        cleanedSize: 9, savedFingerprint: "a".repeat(64),
+      });
+    } else {
+      pending.reject(new Error("old private save failure"));
+    }
+    await act(async () => { await Promise.resolve(); });
+    expect(container.textContent).toContain(newSaved.savedPath);
     expect(container.textContent).not.toContain("old.cleaned.txt");
+    expect(container.textContent).not.toContain("old private save failure");
+    expect(container.textContent).toContain("Clean copy verified.");
+    expect(button("Save clean copy").disabled).toBe(false);
   });
 });

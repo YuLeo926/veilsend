@@ -94,6 +94,14 @@ struct SavedTextFile {
 }
 
 fn write_new_text_copy(path: &Path, content: &str) -> Result<SavedTextFile, String> {
+    write_new_text_copy_with_reread_limit(path, content, MAX_SAVED_TEXT_BYTES)
+}
+
+fn write_new_text_copy_with_reread_limit(
+    path: &Path,
+    content: &str,
+    reread_limit: usize,
+) -> Result<SavedTextFile, String> {
     if content.len() > MAX_SAVED_TEXT_BYTES {
         return Err("The clean copy exceeds VeilSend's 10 MB local safety limit.".to_owned());
     }
@@ -102,31 +110,46 @@ fn write_new_text_copy(path: &Path, content: &str) -> Result<SavedTextFile, Stri
         .create_new(true)
         .open(path)
         .map_err(|error| format!("Could not create a new clean copy: {error}"))?;
-    file.write_all(content.as_bytes())
-        .and_then(|_| file.sync_all())
-        .map_err(|error| format!("Could not finish the clean copy: {error}"))?;
-    drop(file);
+    let result = (|| {
+        file.write_all(content.as_bytes())
+            .and_then(|_| file.sync_all())
+            .map_err(|error| format!("Could not finish the clean copy: {error}"))?;
+        drop(file);
 
-    let file = std::fs::File::open(path)
-        .map_err(|error| format!("Could not reread the clean copy: {error}"))?;
-    let mut saved_bytes = Vec::new();
-    file.take(MAX_SAVED_TEXT_BYTES as u64 + 1)
-        .read_to_end(&mut saved_bytes)
-        .map_err(|error| format!("Could not reread the clean copy: {error}"))?;
-    if saved_bytes.len() > MAX_SAVED_TEXT_BYTES {
-        return Err("The saved clean copy exceeds VeilSend's 10 MB local safety limit.".to_owned());
+        let file = std::fs::File::open(path)
+            .map_err(|error| format!("Could not reread the clean copy: {error}"))?;
+        let mut saved_bytes = Vec::new();
+        file.take(reread_limit as u64 + 1)
+            .read_to_end(&mut saved_bytes)
+            .map_err(|error| format!("Could not reread the clean copy: {error}"))?;
+        if saved_bytes.len() > reread_limit {
+            return Err("The saved clean copy exceeds VeilSend's local safety limit.".to_owned());
+        }
+        let filename = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| "The saved clean copy has no valid filename.".to_owned())?
+            .to_owned();
+        Ok(SavedTextFile {
+            saved_path: path.to_string_lossy().into_owned(),
+            filename,
+            cleaned_size: saved_bytes.len(),
+            saved_fingerprint: fingerprint(&saved_bytes),
+        })
+    })();
+
+    match result {
+        Ok(saved) => Ok(saved),
+        Err(error) => {
+            if std::fs::remove_file(path).is_err() {
+                Err(format!(
+                    "{error} The incomplete clean copy could not be removed."
+                ))
+            } else {
+                Err(error)
+            }
+        }
     }
-    let filename = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or_else(|| "The saved clean copy has no valid filename.".to_owned())?
-        .to_owned();
-    Ok(SavedTextFile {
-        saved_path: path.to_string_lossy().into_owned(),
-        filename,
-        cleaned_size: saved_bytes.len(),
-        saved_fingerprint: fingerprint(&saved_bytes),
-    })
 }
 
 fn run_on_dedicated_pdf_thread<T, F>(operation: &str, task: F) -> Result<T, String>
@@ -661,7 +684,10 @@ pub fn run() {
 
 #[cfg(test)]
 mod path_tests {
-    use super::{run_on_dedicated_pdf_thread, same_path, write_new_text_copy};
+    use super::{
+        run_on_dedicated_pdf_thread, same_path, write_new_text_copy,
+        write_new_text_copy_with_reread_limit,
+    };
     use veilsend_core::fingerprint;
 
     #[test]
@@ -696,6 +722,23 @@ mod path_tests {
         std::fs::write(&path, b"leave me unchanged").unwrap();
         assert!(write_new_text_copy(&path, "replacement").is_err());
         assert_eq!(std::fs::read(&path).unwrap(), b"leave me unchanged");
+    }
+
+    #[test]
+    fn saved_text_identity_removes_unverified_created_copy_and_allows_retry() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("cleaned.txt");
+
+        let error = write_new_text_copy_with_reread_limit(&path, "created bytes", 2).unwrap_err();
+        assert!(error.contains("saved clean copy exceeds"));
+        assert!(
+            !path.exists(),
+            "the newly created unverified copy must be removed"
+        );
+
+        let retry = write_new_text_copy(&path, "verified retry").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"verified retry");
+        assert_eq!(retry.saved_fingerprint, fingerprint(b"verified retry"));
     }
 
     #[test]
