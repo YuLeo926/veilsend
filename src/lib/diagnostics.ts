@@ -80,6 +80,10 @@ function validPageCount(value: unknown): number | null {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 1 && value <= 50 ? value : null;
 }
 
+function hasValidPdfInputBytes(value: unknown): boolean {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 && value <= 50 * mib;
+}
+
 export function bucketInputBytes(bytes: number | null): InputSizeBucket {
   if (bytes === null || !Number.isFinite(bytes) || bytes < 0) return "none";
   if (bytes < mib) return "under 1 MiB";
@@ -162,7 +166,7 @@ export function deriveImageDiagnostics(facts: ImageDiagnosticFacts): WorkflowDia
 export function derivePdfDiagnostics(facts: PdfDiagnosticFacts): WorkflowDiagnostics {
   if (facts.stage === "add") return { ...emptyWorkflowDiagnostics("pdf"), inputSizeBucket: bucketInputBytes(facts.inputBytes) };
   const pageCount = validPageCount(facts.pageCount);
-  const hasPdfSessionEvidence = pageCount !== null && facts.pages.length === pageCount;
+  const hasPdfSessionEvidence = hasValidPdfInputBytes(facts.inputBytes) && pageCount !== null && facts.pages.length === pageCount;
   const textScan = hasPdfSessionEvidence ? aggregateDetectorState(facts.pages, "textAvailability") : "failed";
   const faceScan = hasPdfSessionEvidence ? aggregateDetectorState(facts.pages, "faceAvailability") : "failed";
   const qrScan = hasPdfSessionEvidence ? aggregateDetectorState(facts.pages, "qrAvailability") : "failed";

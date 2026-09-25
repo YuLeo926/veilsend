@@ -105,6 +105,25 @@ describe("privacy-safe diagnostics", () => {
     expect(invalidCount.detectors.pdf).toBe("failed");
   });
 
+  it("requires bounded positive PDF bytes as part of every complete PDF session", () => {
+    const pages = [{ textAvailability: "available", faceAvailability: "available", qrAvailability: "available", barcodeAvailability: "available" }] as const;
+    for (const [stage, inputBytes, resultChecks] of [
+      ["review", null, null],
+      ["review", 0, null],
+      ["review", -1, null],
+      ["review", Number.NaN, null],
+      ["review", Number.POSITIVE_INFINITY, null],
+      ["review", 50 * 1024 * 1024 + 1, null],
+      ["result", null, { savedBytesMatch: true, pageCountMatch: true, pagesRendered: 1, pagesRebuilt: 1, text: true, face: true, qr: true, barcode: true }],
+    ] as const) {
+      const diagnostics = derivePdfDiagnostics({ stage, inputBytes, pageCount: 1, pages, resultChecks });
+      expect(diagnostics.detectors.pdf, `${stage}/${inputBytes}`).toBe("failed");
+    }
+
+    const valid = derivePdfDiagnostics({ stage: "review", inputBytes: 1, pageCount: 1, pages, resultChecks: null });
+    expect(valid.detectors.pdf).toBe("complete");
+  });
+
   it("normalizes poisoned closed values and invalid page counts without outputting their values", () => {
     const poisoned = {
       ...emptyWorkflowDiagnostics("text"),

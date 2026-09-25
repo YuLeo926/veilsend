@@ -177,6 +177,12 @@ export function ImageWorkflow({
     setDecisions({});
   }
 
+  function cancelCurrentOperation(): number {
+    const token = ++operationGeneration.current;
+    setBusy(false);
+    return token;
+  }
+
   async function chooseImage() {
     const token = ++operationGeneration.current;
     setBusy(true);
@@ -235,22 +241,20 @@ export function ImageWorkflow({
   }
 
   async function startAgain() {
-    const token = ++operationGeneration.current;
-    let clearError = "";
+    const token = cancelCurrentOperation();
+    const clear = clearCurrentSession();
+    setResult(null);
+    onError("");
+    onStageChange("add");
     try {
-      await clearCurrentSession();
+      await clear;
     } catch (error) {
-      clearError = readableError(error);
-    } finally {
-      if (operationGeneration.current !== token) return;
-      setResult(null);
-      onError(clearError, clearError ? "workflowFailed" : "none");
-      onStageChange("add");
+      if (operationGeneration.current === token) onError(readableError(error), "workflowFailed");
     }
   }
 
   async function switchInputMode(mode: Exclude<InputMode, "image">) {
-    const token = ++operationGeneration.current;
+    const token = cancelCurrentOperation();
     try {
       await clearCurrentSession();
       onError("");
