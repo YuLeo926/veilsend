@@ -51,6 +51,7 @@ pub struct CleanedPdfVerification {
 pub struct CleanedPdfFile {
     pub saved_path: String,
     pub filename: String,
+    pub saved_fingerprint: String,
     pub original_bytes: usize,
     pub cleaned_size: usize,
     pub pages_rebuilt: usize,
@@ -236,6 +237,7 @@ pub fn clean_pdf_file(
     Ok(Some(CleanedPdfFile {
         saved_path: output.to_string_lossy().into_owned(),
         filename,
+        saved_fingerprint,
         original_bytes: resolved.source_bytes.len(),
         cleaned_size: saved_size,
         pages_rebuilt: prepared.expected_pages.len(),
@@ -745,6 +747,8 @@ mod tests {
 
         let (actual, size) = fingerprint_pdf_file(&path).unwrap();
         assert_eq!(actual, fingerprint(b"verified-pdf"));
+        assert_eq!(actual.len(), 64);
+        assert!(actual.bytes().all(|byte| byte.is_ascii_hexdigit()));
         assert_eq!(size, b"verified-pdf".len());
     }
 

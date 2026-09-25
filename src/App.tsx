@@ -48,6 +48,7 @@ import type {
   ScanOptions,
   ScanReport,
   RuntimeInfo,
+  SavedTextFile,
   Severity,
 } from "./lib/types";
 
@@ -205,7 +206,7 @@ function App() {
   const [error, setError] = useState("");
   const [dropActive, setDropActive] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [savedPath, setSavedPath] = useState("");
+  const [savedFile, setSavedFile] = useState<SavedTextFile | null>(null);
   const [runtimeInfo, setRuntimeInfo] = useState<RuntimeInfo | null>(null);
   const [runtimeState, setRuntimeState] = useState<TrustRuntimeState>("loading");
   const [trustOpen, setTrustOpen] = useState(false);
@@ -282,6 +283,7 @@ function App() {
     textOperationGeneration.current += 1;
     currentMode.current = nextMode;
     setBusy(false);
+    setSavedFile(null);
   }
 
   function isCurrentTextOperation(token: number): boolean {
@@ -330,6 +332,7 @@ function App() {
       return;
     }
     const token = ++textOperationGeneration.current;
+    setSavedFile(null);
     setBusy(true);
     setWorkflowError("");
     try {
@@ -354,6 +357,7 @@ function App() {
   async function runClean() {
     if (!report) return;
     const token = ++textOperationGeneration.current;
+    setSavedFile(null);
     setBusy(true);
     setWorkflowError("");
     try {
@@ -388,7 +392,6 @@ function App() {
     setWorkflowError("");
     setActiveDiagnostics(emptyWorkflowDiagnostics("text"));
     setCopied(false);
-    setSavedPath("");
   }
 
   function switchMode(nextMode: InputMode) {
@@ -412,8 +415,8 @@ function App() {
     if (!result) return;
     const token = ++textOperationGeneration.current;
     try {
-      const path = await saveCleanedText(cleanedFilename(filename), result.cleanedText);
-      if (isCurrentTextOperation(token) && path) setSavedPath(path);
+      const saved = await saveCleanedText(cleanedFilename(filename), result.cleanedText);
+      if (isCurrentTextOperation(token) && saved) setSavedFile(saved);
     } catch (saveError) {
       if (!isCurrentTextOperation(token)) return;
       setWorkflowError(readableError(saveError), "saveFailed");
@@ -640,7 +643,7 @@ function App() {
                   </button>
                   <button className="primary-button" type="button" onClick={() => void saveResult()}><Download size={17} /> Save clean copy</button>
                 </div>
-                {savedPath && <div className="save-confirmation"><Check size={14} /> Saved to {savedPath}</div>}
+                {savedFile && <div className="save-confirmation"><Check size={14} /> Saved to {savedFile.savedPath}</div>}
               </div>
 
               <div className="result-footer">

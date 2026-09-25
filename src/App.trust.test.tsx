@@ -3,14 +3,16 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
-import type { RuntimeInfo, ScanReport } from "./lib/types";
+import type { RuntimeInfo, SavedTextFile, ScanReport } from "./lib/types";
 
 const getRuntimeInfo = vi.hoisted(() => vi.fn());
 const scanText = vi.hoisted(() => vi.fn());
+const sanitizeText = vi.hoisted(() => vi.fn());
+const saveCleanedText = vi.hoisted(() => vi.fn());
 
 vi.mock("./lib/bridge", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./lib/bridge")>();
-  return { ...actual, getRuntimeInfo, scanText, isDesktop: () => true };
+  return { ...actual, getRuntimeInfo, scanText, sanitizeText, saveCleanedText, isDesktop: () => true };
 });
 
 const unverifiedRuntime: RuntimeInfo = {
@@ -54,6 +56,8 @@ beforeEach(() => {
   root = createRoot(container);
   getRuntimeInfo.mockReset();
   scanText.mockReset();
+  sanitizeText.mockReset();
+  saveCleanedText.mockReset();
 });
 
 afterEach(async () => {
@@ -133,5 +137,29 @@ describe("runtime identity indicator", () => {
     await act(async () => { await Promise.resolve(); });
     expect(container.textContent).toContain("Inspect one PDF");
     expect(container.textContent).not.toContain("old private failure");
+  });
+
+  it("does not attach an old saved-output identity after switching modes", async () => {
+    const pending = deferred<SavedTextFile | null>();
+    getRuntimeInfo.mockResolvedValueOnce(unverifiedRuntime);
+    scanText.mockResolvedValueOnce(scanReport);
+    sanitizeText.mockResolvedValueOnce({
+      cleanedText: "safe text",
+      verification: { status: "verified", remainingFindings: [], exceptions: 0, message: "Verified" },
+    });
+    saveCleanedText.mockReturnValueOnce(pending.promise);
+    await act(async () => { root.render(<App />); await Promise.resolve(); });
+    await setText("first");
+    await act(async () => { button("Scan locally").click(); await Promise.resolve(); });
+    await act(async () => { button("Clean & verify").click(); await Promise.resolve(); });
+    await act(async () => { button("Save clean copy").click(); });
+    await act(async () => { button("Scan something else").click(); });
+    await act(async () => { button("PDF").click(); button("Text & logs").click(); });
+    pending.resolve({
+      savedPath: "C:\\private\\old.cleaned.txt", filename: "old.cleaned.txt",
+      cleanedSize: 9, savedFingerprint: "a".repeat(64),
+    });
+    await act(async () => { await Promise.resolve(); });
+    expect(container.textContent).not.toContain("old.cleaned.txt");
   });
 });

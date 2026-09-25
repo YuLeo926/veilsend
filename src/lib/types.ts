@@ -66,6 +66,13 @@ export interface SanitizeResult {
   };
 }
 
+export interface SavedTextFile {
+  savedPath: string;
+  filename: string;
+  cleanedSize: number;
+  savedFingerprint: string;
+}
+
 export type ImageFormat = "jpeg" | "png";
 export type ImageMetadataCategory = "location" | "device" | "identity" | "time" | "description" | "other";
 
@@ -228,6 +235,7 @@ export interface ImageSession {
 export interface CleanedImageFile {
   savedPath: string;
   filename: string;
+  savedFingerprint: string;
   previewDataUrl: string;
   originalBytes: number;
   cleanedSize: number;
@@ -300,6 +308,7 @@ export interface PdfPagePreview {
 export interface CleanedPdfFile {
   savedPath: string;
   filename: string;
+  savedFingerprint: string;
   originalBytes: number;
   cleanedSize: number;
   pagesRebuilt: number;

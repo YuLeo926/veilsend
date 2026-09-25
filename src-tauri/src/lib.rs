@@ -1,5 +1,5 @@
 use std::{
-    io::{Cursor, Read},
+    io::{Cursor, Read, Write},
     path::Path,
 };
 
@@ -66,6 +66,7 @@ struct CleanedImageVerification {
 struct CleanedImageFile {
     saved_path: String,
     filename: String,
+    saved_fingerprint: String,
     preview_data_url: String,
     original_bytes: usize,
     cleaned_size: usize,
@@ -81,6 +82,52 @@ struct CleanedImageFile {
 }
 
 const MAX_SAVED_IMAGE_BYTES: usize = 100 * 1024 * 1024;
+const MAX_SAVED_TEXT_BYTES: usize = 10 * 1024 * 1024;
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SavedTextFile {
+    saved_path: String,
+    filename: String,
+    cleaned_size: usize,
+    saved_fingerprint: String,
+}
+
+fn write_new_text_copy(path: &Path, content: &str) -> Result<SavedTextFile, String> {
+    if content.len() > MAX_SAVED_TEXT_BYTES {
+        return Err("The clean copy exceeds VeilSend's 10 MB local safety limit.".to_owned());
+    }
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(|error| format!("Could not create a new clean copy: {error}"))?;
+    file.write_all(content.as_bytes())
+        .and_then(|_| file.sync_all())
+        .map_err(|error| format!("Could not finish the clean copy: {error}"))?;
+    drop(file);
+
+    let file = std::fs::File::open(path)
+        .map_err(|error| format!("Could not reread the clean copy: {error}"))?;
+    let mut saved_bytes = Vec::new();
+    file.take(MAX_SAVED_TEXT_BYTES as u64 + 1)
+        .read_to_end(&mut saved_bytes)
+        .map_err(|error| format!("Could not reread the clean copy: {error}"))?;
+    if saved_bytes.len() > MAX_SAVED_TEXT_BYTES {
+        return Err("The saved clean copy exceeds VeilSend's 10 MB local safety limit.".to_owned());
+    }
+    let filename = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| "The saved clean copy has no valid filename.".to_owned())?
+        .to_owned();
+    Ok(SavedTextFile {
+        saved_path: path.to_string_lossy().into_owned(),
+        filename,
+        cleaned_size: saved_bytes.len(),
+        saved_fingerprint: fingerprint(&saved_bytes),
+    })
+}
 
 fn run_on_dedicated_pdf_thread<T, F>(operation: &str, task: F) -> Result<T, String>
 where
@@ -116,7 +163,7 @@ fn get_runtime_info() -> release_info::RuntimeInfo {
 async fn save_cleaned_text(
     default_name: String,
     content: String,
-) -> Result<Option<String>, String> {
+) -> Result<Option<SavedTextFile>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let path = rfd::FileDialog::new()
             .set_file_name(&default_name)
@@ -124,9 +171,7 @@ async fn save_cleaned_text(
         let Some(path) = path else {
             return Ok(None);
         };
-        std::fs::write(&path, content)
-            .map_err(|error| format!("Could not save the clean copy: {error}"))?;
-        Ok(Some(path.to_string_lossy().into_owned()))
+        write_new_text_copy(&path, &content).map(Some)
     })
     .await
     .map_err(|error| format!("The save dialog could not be opened: {error}"))?
@@ -452,6 +497,7 @@ async fn clean_image_file(
         Ok(Some(CleanedImageFile {
             saved_path: output.to_string_lossy().into_owned(),
             filename,
+            saved_fingerprint: fingerprint(&saved_bytes),
             preview_data_url: data_url(extension, &saved_bytes),
             original_bytes,
             cleaned_size: saved_bytes.len(),
@@ -615,7 +661,42 @@ pub fn run() {
 
 #[cfg(test)]
 mod path_tests {
-    use super::{run_on_dedicated_pdf_thread, same_path};
+    use super::{run_on_dedicated_pdf_thread, same_path, write_new_text_copy};
+    use veilsend_core::fingerprint;
+
+    #[test]
+    fn saved_text_identity_comes_from_reread_destination() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("cleaned.txt");
+        let saved = write_new_text_copy(&path, "reserved example").unwrap();
+        assert_eq!(saved.saved_path, path.to_string_lossy());
+        assert_eq!(saved.filename, "cleaned.txt");
+        assert_eq!(saved.cleaned_size, 16);
+        assert_eq!(saved.saved_fingerprint, fingerprint(b"reserved example"));
+        assert_eq!(saved.saved_fingerprint.len(), 64);
+        assert!(
+            saved
+                .saved_fingerprint
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit())
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), b"reserved example");
+        let wire = serde_json::to_value(&saved).unwrap();
+        assert_eq!(wire["savedPath"], path.to_string_lossy().as_ref());
+        assert_eq!(wire["filename"], "cleaned.txt");
+        assert_eq!(wire["cleanedSize"], 16);
+        assert_eq!(wire["savedFingerprint"], fingerprint(b"reserved example"));
+        assert!(wire.get("saved_fingerprint").is_none());
+    }
+
+    #[test]
+    fn saved_text_identity_refuses_to_replace_existing_destination() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("cleaned.txt");
+        std::fs::write(&path, b"leave me unchanged").unwrap();
+        assert!(write_new_text_copy(&path, "replacement").is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), b"leave me unchanged");
+    }
 
     #[test]
     fn pdf_work_uses_a_fresh_operating_system_thread() {
