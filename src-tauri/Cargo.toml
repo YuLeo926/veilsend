@@ -43,5 +43,6 @@ windows = { version = "0.62.2", features = [
     "System_Profile",
     "Win32_System_WinRT",
     "Win32_UI_HiDpi",
+    "Win32_Storage_FileSystem",
 ] }
 windows-future = "=0.3.2"

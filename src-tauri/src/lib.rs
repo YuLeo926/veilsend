@@ -1,5 +1,5 @@
 use std::{
-    io::{Cursor, Read, Write},
+    io::{Cursor, Read, Seek, SeekFrom, Write},
     path::Path,
 };
 
@@ -102,28 +102,39 @@ fn write_new_text_copy_with_reread_limit(
     content: &str,
     reread_limit: usize,
 ) -> Result<SavedTextFile, String> {
+    write_new_text_copy_with_reread_limit_and_hook(path, content, reread_limit, || Ok(()))
+}
+
+fn write_new_text_copy_with_reread_limit_and_hook(
+    path: &Path,
+    content: &str,
+    reread_limit: usize,
+    after_sync: impl FnOnce() -> Result<(), String>,
+) -> Result<SavedTextFile, String> {
     if content.len() > MAX_SAVED_TEXT_BYTES {
         return Err("The clean copy exceeds VeilSend's 10 MB local safety limit.".to_owned());
     }
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)
+    let mut file = open_new_text_copy(path)
         .map_err(|error| format!("Could not create a new clean copy: {error}"))?;
     let result = (|| {
         file.write_all(content.as_bytes())
             .and_then(|_| file.sync_all())
             .map_err(|error| format!("Could not finish the clean copy: {error}"))?;
-        drop(file);
+        after_sync()?;
 
-        let file = std::fs::File::open(path)
+        file.seek(SeekFrom::Start(0))
             .map_err(|error| format!("Could not reread the clean copy: {error}"))?;
         let mut saved_bytes = Vec::new();
-        file.take(reread_limit as u64 + 1)
+        Read::take(&mut file, reread_limit as u64 + 1)
             .read_to_end(&mut saved_bytes)
             .map_err(|error| format!("Could not reread the clean copy: {error}"))?;
         if saved_bytes.len() > reread_limit {
             return Err("The saved clean copy exceeds VeilSend's local safety limit.".to_owned());
+        }
+        if !path_names_open_file(&file, path)? {
+            return Err(
+                "The saved clean copy changed at its destination before verification.".to_owned(),
+            );
         }
         let filename = path
             .file_name()
@@ -141,7 +152,9 @@ fn write_new_text_copy_with_reread_limit(
     match result {
         Ok(saved) => Ok(saved),
         Err(error) => {
-            if std::fs::remove_file(path).is_err() {
+            let removed = cleanup_owned_text_copy(&file, path);
+            drop(file);
+            if !removed {
                 Err(format!(
                     "{error} The incomplete clean copy could not be removed."
                 ))
@@ -150,6 +163,61 @@ fn write_new_text_copy_with_reread_limit(
             }
         }
     }
+}
+
+fn open_new_text_copy(path: &Path) -> std::io::Result<std::fs::File> {
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true).write(true).create_new(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        use windows::Win32::{
+            Foundation::{GENERIC_READ, GENERIC_WRITE},
+            Storage::FileSystem::DELETE,
+        };
+        // Handle-based failure cleanup requires DELETE access from creation.
+        options.access_mode(GENERIC_READ.0 | GENERIC_WRITE.0 | DELETE.0);
+    }
+    options.open(path)
+}
+
+fn path_names_open_file(file: &std::fs::File, path: &Path) -> Result<bool, String> {
+    let owned = same_file::Handle::from_file(
+        file.try_clone()
+            .map_err(|_| "Could not verify the saved clean copy's file identity.".to_owned())?,
+    )
+    .map_err(|_| "Could not verify the saved clean copy's file identity.".to_owned())?;
+    let named = same_file::Handle::from_path(path)
+        .map_err(|_| "Could not verify the saved clean copy's final destination.".to_owned())?;
+    Ok(owned == named)
+}
+
+#[cfg(windows)]
+fn cleanup_owned_text_copy(file: &std::fs::File, _path: &Path) -> bool {
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::{
+        Foundation::HANDLE,
+        Storage::FileSystem::{
+            FILE_DISPOSITION_INFO, FileDispositionInfo, SetFileInformationByHandle,
+        },
+    };
+
+    let disposition = FILE_DISPOSITION_INFO { DeleteFile: true };
+    // This marks the opened file object, even if its pathname was replaced.
+    unsafe {
+        SetFileInformationByHandle(
+            HANDLE(file.as_raw_handle()),
+            FileDispositionInfo,
+            &disposition as *const _ as *const std::ffi::c_void,
+            std::mem::size_of_val(&disposition) as u32,
+        )
+        .is_ok()
+    }
+}
+
+#[cfg(not(windows))]
+fn cleanup_owned_text_copy(file: &std::fs::File, path: &Path) -> bool {
+    path_names_open_file(file, path).unwrap_or(false) && std::fs::remove_file(path).is_ok()
 }
 
 fn run_on_dedicated_pdf_thread<T, F>(operation: &str, task: F) -> Result<T, String>
@@ -686,7 +754,7 @@ pub fn run() {
 mod path_tests {
     use super::{
         run_on_dedicated_pdf_thread, same_path, write_new_text_copy,
-        write_new_text_copy_with_reread_limit,
+        write_new_text_copy_with_reread_limit, write_new_text_copy_with_reread_limit_and_hook,
     };
     use veilsend_core::fingerprint;
 
@@ -739,6 +807,44 @@ mod path_tests {
         let retry = write_new_text_copy(&path, "verified retry").unwrap();
         assert_eq!(std::fs::read(&path).unwrap(), b"verified retry");
         assert_eq!(retry.saved_fingerprint, fingerprint(b"verified retry"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn failed_text_copy_cleanup_removes_owned_renamed_file_not_replacement() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("cleaned.txt");
+        let renamed = directory.path().join("renamed-owned.txt");
+        let error =
+            write_new_text_copy_with_reread_limit_and_hook(&path, "created bytes", 2, || {
+                std::fs::rename(&path, &renamed).unwrap();
+                std::fs::write(&path, b"sentinel replacement").unwrap();
+                Ok(())
+            })
+            .unwrap_err();
+
+        assert!(error.contains("saved clean copy exceeds"));
+        assert!(!renamed.exists(), "only the owned file should be removed");
+        assert_eq!(std::fs::read(&path).unwrap(), b"sentinel replacement");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn text_copy_rejects_replaced_final_path_before_success() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("cleaned.txt");
+        let renamed = directory.path().join("renamed-owned.txt");
+        let error =
+            write_new_text_copy_with_reread_limit_and_hook(&path, "created bytes", 64, || {
+                std::fs::rename(&path, &renamed).unwrap();
+                std::fs::write(&path, b"sentinel replacement").unwrap();
+                Ok(())
+            })
+            .unwrap_err();
+
+        assert!(error.contains("changed at its destination"));
+        assert!(!renamed.exists());
+        assert_eq!(std::fs::read(&path).unwrap(), b"sentinel replacement");
     }
 
     #[test]
