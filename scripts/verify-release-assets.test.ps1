@@ -179,10 +179,13 @@ try {
   [IO.File]::WriteAllText($fakeScript, @'
 param([Parameter(ValueFromRemainingArguments=$true)][string[]]$Arguments)
 $ErrorActionPreference = 'Stop'
+# The exact certificate identity pins release.yml and its tag; gh rejects it
+# when combined with any other identity selector such as --signer-workflow.
+$identitySelectors = @($Arguments | Where-Object { $_ -in @('--cert-identity', '--cert-identity-regex', '--signer-repo', '--signer-workflow') })
+if ($identitySelectors.Count -ne 1) { throw 'Conflicting provenance identity selectors: expected exactly one.' }
 $required = @(
   'attestation', 'verify', $Arguments[2],
   '--repo', 'YuLeo926/veilsend',
-  '--signer-workflow', 'YuLeo926/veilsend/.github/workflows/release.yml',
   '--cert-identity', 'https://github.com/YuLeo926/veilsend/.github/workflows/release.yml@refs/tags/v0.2.0-beta.1',
   '--source-ref', 'refs/tags/v0.2.0-beta.1',
   '--predicate-type', 'https://slsa.dev/provenance/v1', '--deny-self-hosted-runners'

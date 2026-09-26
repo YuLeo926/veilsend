@@ -19,7 +19,7 @@ pwsh -File scripts/verify-release-assets.ps1 -AssetsDirectory tmp/release-verify
 
 The verifier must fail closed on missing or extra assets, malformed or mismatched SHA-256 lines, invalid SBOM format, unexpected ZIP members, a signed-state mismatch, or missing/invalid GitHub attestation. Do not bypass provenance checks for a production release. Verify that the draft's tag resolves to the accepted commit and its assets are the expected `VeilSend_0.2.0-beta.1_x64-setup-UNSIGNED.exe`, `VeilSend_0.2.0-beta.1_x64-portable-UNSIGNED.zip`, `veilsend-0.2.0-beta.1-sbom.cdx.json`, and `SHA256SUMS.txt`.
 
-Use PowerShell 7 on Windows and a GitHub CLI supporting `gh attestation verify` with `--signer-workflow`, `--cert-identity`, `--source-ref`, `--source-digest`, and `--deny-self-hosted-runners`. The CLI must have access to the draft's attestations. The asset verifier binds every asset (including `SHA256SUMS.txt`) to the requested repository, `.github/workflows/release.yml`, the exact `refs/tags/v0.2.0-beta.1` certificate identity/source ref, SLSA v1 build provenance, and GitHub-hosted runners. These source-ref checks alone do **not** prove the immutable source commit. After clean-Windows acceptance produces the record, perform the separate source-digest and tag-commit checks below. Missing credentials, unsupported flags, network failures, or provenance mismatch block verification; an attestation from an unrelated workflow in the same repository is insufficient.
+Use PowerShell 7 on Windows and a GitHub CLI supporting `gh attestation verify` with `--cert-identity`, `--source-ref`, `--source-digest`, and `--deny-self-hosted-runners`. The CLI must have access to the draft's attestations. The asset verifier binds every asset (including `SHA256SUMS.txt`) to the requested repository, `.github/workflows/release.yml`, the exact `refs/tags/v0.2.0-beta.1` certificate identity/source ref, SLSA v1 build provenance, and GitHub-hosted runners. The exact certificate identity already specifies both the signing workflow and tag; GitHub CLI treats `--cert-identity` and `--signer-workflow` as mutually exclusive identity selectors, so do not combine them. These source-ref checks alone do **not** prove the immutable source commit. After clean-Windows acceptance produces the record, perform the separate source-digest and tag-commit checks below. Missing credentials, unsupported flags, network failures, or provenance mismatch block verification; an attestation from an unrelated workflow in the same repository is insufficient.
 
 The download directory must contain only the four exact files, including no hidden extras, directories, or reparse points. The checksum manifest must contain exactly one lowercase 64-digit SHA-256 entry per payload, separated from its exact filename by two spaces; duplicate, unknown, malformed, and missing entries fail. All ZIP entries are inspected **before extraction**: only the four exact root files are accepted, never directory entries, traversal, alternate streams, links, or duplicate names. Both executable signatures must be `NotSigned`, the JSON must identify `CycloneDX`, and the bundled notes must disclose this unsigned pre-release and the SmartScreen warning. This checks the declared SBOM format, not full CycloneDX schema validity or inventory completeness.
 
@@ -71,11 +71,12 @@ Create `docs/releases/v0.2.0-beta.1-acceptance.json` **only after every clean-Wi
 
 JSON member names must be unique within each object, including equivalent escaped spellings. The CLI rejects duplicate members before parsing the record so an overwritten value cannot hide prohibited content or contradictory evidence.
 
-Before publishing the draft (Task 4/5), bind **each of the four downloaded assets** to the exact accepted commit in that validated record. The installed GitHub CLI's `gh attestation verify --help` confirms `--source-digest` accepts the digest associated with the source repository. Keep the existing verifier's repository, signer workflow, certificate identity, source ref, predicate, and hosted-runner checks; this is an additional check, not a replacement. In PowerShell, with the four draft assets still in `tmp/release-verify-v0.2.0-beta.1`:
+Before publishing the draft (Task 4/5), bind **each of the four downloaded assets** to the immutable candidate commit `bbaa1c7488cff90338e73380161ffaa4875b9880` and the exact accepted commit in the validated record; a disagreement blocks publication. The installed GitHub CLI's `gh attestation verify --help` confirms `--source-digest` accepts the digest associated with the source repository. Keep the existing verifier's repository, exact certificate identity (which also pins the signer workflow and tag), source ref, predicate, and hosted-runner checks; this is an additional check, not a replacement. In PowerShell, with the four draft assets still in `tmp/release-verify-v0.2.0-beta.1`:
 
 ```powershell
 $record = Get-Content -Raw -LiteralPath docs/releases/v0.2.0-beta.1-acceptance.json | ConvertFrom-Json
 $acceptedCommit = $record.commit
+if ($acceptedCommit -cne 'bbaa1c7488cff90338e73380161ffaa4875b9880') { throw 'Acceptance record differs from the immutable beta source commit' }
 $assetsDirectory = 'tmp/release-verify-v0.2.0-beta.1'
 $assets = @(
   'VeilSend_0.2.0-beta.1_x64-setup-UNSIGNED.exe',
@@ -85,7 +86,6 @@ $assets = @(
 )
 foreach ($asset in $assets) {
   gh attestation verify (Join-Path $assetsDirectory $asset) --repo YuLeo926/veilsend `
-    --signer-workflow YuLeo926/veilsend/.github/workflows/release.yml `
     --cert-identity 'https://github.com/YuLeo926/veilsend/.github/workflows/release.yml@refs/tags/v0.2.0-beta.1' `
     --source-ref refs/tags/v0.2.0-beta.1 --source-digest $acceptedCommit `
     --predicate-type https://slsa.dev/provenance/v1 --deny-self-hosted-runners

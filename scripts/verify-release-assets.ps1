@@ -132,7 +132,6 @@ try {
     $gh = (Get-Command gh -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
     foreach ($asset in $expected) {
       & $gh attestation verify (Join-Path $inspection $asset) --repo $Repository `
-        --signer-workflow "$Repository/.github/workflows/release.yml" `
         --cert-identity "https://github.com/$Repository/.github/workflows/release.yml@refs/tags/v0.2.0-beta.1" `
         --source-ref refs/tags/v0.2.0-beta.1 --predicate-type https://slsa.dev/provenance/v1 `
         --deny-self-hosted-runners | Out-Null
