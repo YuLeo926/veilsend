@@ -6,9 +6,9 @@ VeilSend is a local-first outbound safety gate for text, logs, configuration fil
 
 > VeilSend reduces accidental disclosure. It does not guarantee that content is safe and is not a compliance product.
 
-## 0.2.0-beta.1 candidate
+## 0.2.0-beta.1 experimental Beta
 
-The Windows 10/11 x64 beta is an unsigned pre-release candidate. The capabilities below are implemented in source, but the public release and clean-Windows acceptance have not yet been completed. Keep originals and review every result; `Verified` describes completed supported checks, not universal safety.
+The Windows 10/11 x64 beta is an unsigned pre-release for experimental evaluation. Core text/image/PDF workflows passed limited smoke testing on one Windows 11 development host. Clean-system compatibility, portable runtime, uninstall preservation, disconnected-network operation, and the full manual acceptance matrix remain unverified. Read the [validation scope](docs/releases/v0.2.0-beta.1-experimental.md). Keep originals and review every result; `Verified` describes completed supported checks, not universal safety.
 
 ## Current milestone
 
@@ -88,7 +88,7 @@ npm run tauri dev
 
 ## Download the Windows beta
 
-When published, official binaries will be available only through the [VeilSend GitHub pre-releases](https://github.com/YuLeo926/veilsend/releases). **No public download or clean-Windows validation is claimed by this candidate documentation.** VeilSend 0.2.0-beta.1 is an **unsigned pre-release**: Microsoft SmartScreen may warn before its first run. A warning does not prove a file is authentic.
+Official binaries are distributed only through the [VeilSend GitHub pre-releases](https://github.com/YuLeo926/veilsend/releases). **This experimental Beta has not completed clean-Windows acceptance.** VeilSend 0.2.0-beta.1 is an **unsigned pre-release**: Microsoft SmartScreen may warn before its first run. A warning does not prove a file is authentic.
 
 | Planned Release asset | Purpose |
 | --- | --- |
@@ -107,7 +107,7 @@ Get-FileHash -Algorithm SHA256 .\VeilSend_0.2.0-beta.1_x64-setup-UNSIGNED.exe
 Get-Content .\SHA256SUMS.txt
 ```
 
-The displayed hash must exactly match the entry in `SHA256SUMS.txt`. See the [release runbook](docs/release.md) for the asset and provenance verifier. The installer may need Microsoft's WebView2 bootstrapper and a network connection when that runtime is unavailable. VeilSend **works offline after installation** for scanning, redaction, verification, and saving; it has no updater, analytics, crash uploads, or background service. Read [the beta release notes](RELEASE_NOTES.md) before installing.
+The displayed hash must exactly match the entry in `SHA256SUMS.txt`. See the [release runbook](docs/release.md) for the asset and provenance verifier. The installer may need Microsoft's WebView2 bootstrapper and a network connection when that runtime is unavailable. The intended runtime boundary is that VeilSend **works offline after installation** for scanning, redaction, verification, and saving; disconnected-network operation was not tested for this experimental release. It has no updater, analytics, crash uploads, or background service. Read [the beta release notes](RELEASE_NOTES.md) before installing.
 
 Use **Try safe sample** in text mode. Image mode opens local JPEG and PNG files through the native file picker or accepts a bitmap from the focused Windows clipboard. PDF mode opens `fixtures/pdf-sensitive-sample.pdf` for the bounded three-page acceptance flow. All repository fixtures are synthetic.
 
