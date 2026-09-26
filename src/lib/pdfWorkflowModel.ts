@@ -9,6 +9,42 @@ import type {
 } from "./types";
 
 export type PdfFindingKind = "text" | "face" | "qr" | "barcode";
+export type PdfZoom = "fitWidth" | "fitPage" | 50 | 75 | 100 | 125 | 150 | 175 | 200;
+
+const zooms = [50, 75, 100, 125, 150, 175, 200] as const;
+
+export function stepPdfZoom(current: PdfZoom, direction: -1 | 1): PdfZoom {
+  const value = typeof current === "number" ? current : 100;
+  const index = zooms.indexOf(value);
+  return zooms[Math.min(zooms.length - 1, Math.max(0, index + direction))];
+}
+
+export function clampPdfPage(current: number, pageCount: number, delta: -1 | 1): number {
+  return Math.min(Math.max(pageCount - 1, 0), Math.max(0, current + delta));
+}
+
+export function isEditableTarget(target: EventTarget | null): boolean {
+  const candidate = target as { tagName?: unknown; isContentEditable?: unknown } | null;
+  return Boolean(candidate && (candidate.isContentEditable === true
+    || (typeof candidate.tagName === "string" && /^(INPUT|TEXTAREA|SELECT)$/.test(candidate.tagName))));
+}
+
+export function imageRectPercentStyle(rect: ImageRect, pageWidth: number, pageHeight: number): {
+  left: string;
+  top: string;
+  width: string;
+  height: string;
+} {
+  if (!Number.isFinite(pageWidth) || pageWidth <= 0 || !Number.isFinite(pageHeight) || pageHeight <= 0) {
+    throw new Error("PDF page dimensions must be positive finite numbers");
+  }
+  return {
+    left: `${(rect.x / pageWidth) * 100}%`,
+    top: `${(rect.y / pageHeight) * 100}%`,
+    width: `${(rect.width / pageWidth) * 100}%`,
+    height: `${(rect.height / pageHeight) * 100}%`,
+  };
+}
 
 export type PdfVisualFinding = {
   id: string;
