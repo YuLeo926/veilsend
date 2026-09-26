@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -26,10 +27,44 @@ const validRecord = () => ({
   fixtureHashes: {
     syntheticFace: "c243801fda58b63cc987ba19ab9c51a67fe452b4eab6804ef28cd0d1442f6abe",
     pdf: "fff96e09d22791ac0c4f56f8925409891b90b8d41540db6f85b2e3c461a7ee1e",
-    pdfAttachment: "c7f94c54296fdc83d2d595189356d2079e5911fca6738ad2f1b1b87a0df98cc3",
+    pdfAttachment: "ea250860e548c1fa7b6662dab6e47d85037475ce0d7b9847d462e46f2640dbb2",
   },
   results: Object.fromEntries(requiredResults.map((name) => [name, "pass"])),
   completedAt: "2026-08-30T12:00:00.000Z",
+});
+
+test("all three checked-out synthetic fixtures match the acceptance contract bytes", () => {
+  const fixtures = {
+    syntheticFace: "synthetic-face-source.png",
+    pdf: "pdf-sensitive-sample.pdf",
+    pdfAttachment: "pdf-sensitive-attachment.txt",
+  };
+  for (const [field, filename] of Object.entries(fixtures)) {
+    const path = fileURLToPath(new URL(`../fixtures/${filename}`, import.meta.url));
+    const actual = createHash("sha256").update(readFileSync(path)).digest("hex");
+    assert.equal(actual, validRecord().fixtureHashes[field], `${filename} differs from the accepted fixture`);
+  }
+});
+
+test("text attachment checkout explicitly keeps its canonical LF bytes", () => {
+  const root = fileURLToPath(new URL("..", import.meta.url));
+  const result = spawnSync("git", ["check-attr", "eol", "--", "fixtures/pdf-sensitive-attachment.txt"],
+    { cwd: root, encoding: "utf8" });
+  assert.equal(result.status, 0);
+  assert.match(result.stdout, /^fixtures\/pdf-sensitive-attachment\.txt: eol: lf\r?\n$/);
+
+  const temp = mkdtempSync(join(tmpdir(), "veilsend-lf-checkout-"));
+  try {
+    const checkout = spawnSync("git", ["-c", "core.autocrlf=true", "checkout-index",
+      `--prefix=${temp}${sep}`, "--", "fixtures/pdf-sensitive-attachment.txt"],
+    { cwd: root, encoding: "utf8" });
+    assert.equal(checkout.status, 0, checkout.stderr);
+    const actual = createHash("sha256")
+      .update(readFileSync(join(temp, "fixtures", "pdf-sensitive-attachment.txt"))).digest("hex");
+    assert.equal(actual, validRecord().fixtureHashes.pdfAttachment);
+  } finally {
+    rmSync(temp, { recursive: true, force: true });
+  }
 });
 
 test("accepts a complete synthetic record with exactly seventeen passes", () => {

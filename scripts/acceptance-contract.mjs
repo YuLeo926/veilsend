@@ -10,7 +10,7 @@ const topLevel = [
 const fixtureHashes = {
   syntheticFace: "c243801fda58b63cc987ba19ab9c51a67fe452b4eab6804ef28cd0d1442f6abe",
   pdf: "fff96e09d22791ac0c4f56f8925409891b90b8d41540db6f85b2e3c461a7ee1e",
-  pdfAttachment: "c7f94c54296fdc83d2d595189356d2079e5911fca6738ad2f1b1b87a0df98cc3",
+  pdfAttachment: "ea250860e548c1fa7b6662dab6e47d85037475ce0d7b9847d462e46f2640dbb2",
 };
 
 const requiredResults = [

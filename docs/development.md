@@ -155,7 +155,7 @@ cargo run -p veilsend-core --example make_pdf_fixture
 Expected SHA-256 values:
 
 - `fixtures/pdf-sensitive-sample.pdf`: `fff96e09d22791ac0c4f56f8925409891b90b8d41540db6f85b2e3c461a7ee1e`
-- `fixtures/pdf-sensitive-attachment.txt`: `c7f94c54296fdc83d2d595189356d2079e5911fca6738ad2f1b1b87a0df98cc3`
+- `fixtures/pdf-sensitive-attachment.txt`: `ea250860e548c1fa7b6662dab6e47d85037475ce0d7b9847d462e46f2640dbb2` (canonical LF bytes; `.gitattributes` preserves LF on Windows checkouts)
 
 Run the complete object-removal, page-rendering, redaction, and saved-page verification test:
 
