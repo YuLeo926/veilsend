@@ -1,10 +1,11 @@
 use std::{
     io::{Cursor, Read, Seek, SeekFrom, Write},
-    path::Path,
+    path::{Path, PathBuf},
 };
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde::Serialize;
+use tauri::Manager;
 use veilsend_core::{
     DEFAULT_MAX_IMAGE_BYTES, ImageBarcodeInspection, ImageFaceInspection, ImageFormat,
     ImageInspection, ImageOcrInspection, ImageQrInspection, ImageRedactionDecision,
@@ -238,6 +239,50 @@ where
         .map_err(|_| format!("{operation} stopped unexpectedly."))?
 }
 
+fn validate_local_file(path: &Path, extensions: &[&str]) -> Result<(), String> {
+    if !path.is_file() {
+        return Err("Choose one supported local file, not a folder.".to_owned());
+    }
+    let supported = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .is_some_and(|value| {
+            extensions
+                .iter()
+                .any(|expected| value.eq_ignore_ascii_case(expected))
+        });
+    if !supported {
+        return Err("That file type is not supported in this workspace.".to_owned());
+    }
+    Ok(())
+}
+
+fn load_image_path(path: PathBuf, store: &ImageSessionStore) -> Result<ImageSession, String> {
+    // A replacement attempt invalidates the previous review even if validation fails.
+    store.clear()?;
+    let loaded = (|| {
+        validate_local_file(&path, &["jpg", "jpeg", "png"])?;
+        let summary = store.replace_file(&path)?;
+        let resolved = store.resolve(&summary.id)?;
+        let (session, reviewed) = build_image_session(summary, &resolved.bytes)?;
+        store.set_reviewed(&session.session_id, reviewed)?;
+        Ok(session)
+    })();
+    if loaded.is_err() {
+        store.clear()?;
+    }
+    loaded
+}
+
+fn load_pdf_path(path: PathBuf, store: &PdfSessionStore) -> Result<PdfSessionSummary, String> {
+    store.clear()?;
+    validate_local_file(&path, &["pdf"])?;
+    let prepared = run_on_dedicated_pdf_thread("The PDF inspection", move || {
+        pdf_sessions::prepare_pdf_file(&path)
+    })?;
+    store.replace(prepared)
+}
+
 #[tauri::command]
 fn scan_text(text: String, options: ScanOptions) -> Result<ScanReport, VeilSendError> {
     scan(&text, options)
@@ -286,11 +331,15 @@ async fn pick_image(
     let Some(path) = path else {
         return Ok(None);
     };
-    let summary = state.replace_file(&path)?;
-    let resolved = state.resolve(&summary.id)?;
-    let (session, reviewed) = build_image_session(summary, &resolved.bytes)?;
-    state.set_reviewed(&session.session_id, reviewed)?;
-    Ok(Some(session))
+    load_image_path(path, &state).map(Some)
+}
+
+#[tauri::command]
+async fn open_image_path(
+    path: String,
+    state: tauri::State<'_, ImageSessionStore>,
+) -> Result<ImageSession, String> {
+    load_image_path(PathBuf::from(path), &state)
 }
 
 #[tauri::command]
@@ -320,23 +369,25 @@ async fn paste_image(
 }
 
 #[tauri::command]
-async fn pick_pdf(
-    state: tauri::State<'_, PdfSessionStore>,
-) -> Result<Option<PdfSessionSummary>, String> {
-    let prepared = tauri::async_runtime::spawn_blocking(move || {
+async fn pick_pdf(app: tauri::AppHandle) -> Result<Option<PdfSessionSummary>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
         let path = rfd::FileDialog::new()
             .add_filter("PDF documents", &["pdf"])
             .pick_file();
-        path.map(|path| {
-            run_on_dedicated_pdf_thread("The PDF inspection", move || {
-                pdf_sessions::prepare_pdf_file(&path)
-            })
-        })
-        .transpose()
+        path.map(|path| load_pdf_path(path, &app.state::<PdfSessionStore>()))
+            .transpose()
     })
     .await
-    .map_err(|error| format!("The PDF picker could not be opened: {error}"))??;
-    prepared.map(|prepared| state.replace(prepared)).transpose()
+    .map_err(|error| format!("The PDF picker could not finish: {error}"))?
+}
+
+#[tauri::command]
+async fn open_pdf_path(path: String, app: tauri::AppHandle) -> Result<PdfSessionSummary, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        load_pdf_path(PathBuf::from(path), &app.state::<PdfSessionStore>())
+    })
+    .await
+    .map_err(|_| "The PDF inspection could not finish.".to_owned())?
 }
 
 #[tauri::command]
@@ -741,10 +792,12 @@ pub fn run() {
             get_runtime_info,
             save_cleaned_text,
             pick_image,
+            open_image_path,
             paste_image,
             clear_image_session,
             clean_image_file,
             pick_pdf,
+            open_pdf_path,
             get_pdf_page_preview,
             clear_pdf_session,
             clean_pdf_file
@@ -756,10 +809,74 @@ pub fn run() {
 #[cfg(test)]
 mod path_tests {
     use super::{
-        run_on_dedicated_pdf_thread, same_path, write_new_text_copy,
-        write_new_text_copy_with_reread_limit, write_new_text_copy_with_reread_limit_and_hook,
+        load_image_path, load_pdf_path, run_on_dedicated_pdf_thread, same_path,
+        validate_local_file, write_new_text_copy, write_new_text_copy_with_reread_limit,
+        write_new_text_copy_with_reread_limit_and_hook,
+    };
+    use crate::{
+        image_sessions::ImageSessionStore,
+        pdf_sessions::{PdfSessionStore, PreparedPdfSession},
     };
     use veilsend_core::fingerprint;
+
+    #[test]
+    fn dropped_path_must_be_a_regular_file_with_the_expected_extension() {
+        let directory = tempfile::tempdir().unwrap();
+        assert!(validate_local_file(directory.path(), &["jpg", "jpeg", "png"]).is_err());
+        let wrong = directory.path().join("image.txt");
+        std::fs::write(&wrong, b"not an image").unwrap();
+        assert!(validate_local_file(&wrong, &["jpg", "jpeg", "png"]).is_err());
+    }
+
+    #[test]
+    fn failed_image_preparation_does_not_leave_an_active_session() {
+        let store = ImageSessionStore::default();
+        let prior = store.replace_clipboard(vec![1, 2, 3]).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("private-broken.png");
+        std::fs::write(&path, b"not png bytes").unwrap();
+        let error = load_image_path(path.clone(), &store).unwrap_err();
+        assert!(store.resolve(&prior.id).is_err());
+        assert!(!error.contains("private-broken.png"));
+        assert!(!error.contains(&path.to_string_lossy().to_string()));
+    }
+
+    #[test]
+    fn rejected_replacement_type_expires_the_previous_image_session() {
+        let store = ImageSessionStore::default();
+        let prior = store.replace_clipboard(vec![1, 2, 3]).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("private-not-an-image.txt");
+        std::fs::write(&path, b"not an image").unwrap();
+        let error = load_image_path(path.clone(), &store).unwrap_err();
+        assert!(store.resolve(&prior.id).is_err());
+        assert!(!error.contains("private-not-an-image.txt"));
+        assert!(!error.contains(&path.to_string_lossy().to_string()));
+    }
+
+    #[test]
+    fn failed_pdf_preparation_does_not_leave_an_active_session() {
+        let store = PdfSessionStore::default();
+        let directory = tempfile::tempdir().unwrap();
+        let prior_path = directory.path().join("prior.pdf");
+        let prior_bytes = b"%PDF-prior".to_vec();
+        std::fs::write(&prior_path, &prior_bytes).unwrap();
+        let prior = store
+            .replace(PreparedPdfSession {
+                canonical_path: prior_path.canonicalize().unwrap(),
+                source_bytes: prior_bytes.clone(),
+                fingerprint: fingerprint(&prior_bytes),
+                filename: "prior.pdf".to_owned(),
+                pages: Vec::new(),
+            })
+            .unwrap();
+        let path = directory.path().join("private-broken.pdf");
+        std::fs::write(&path, b"not pdf bytes").unwrap();
+        let error = load_pdf_path(path.clone(), &store).unwrap_err();
+        assert!(store.resolve(&prior.session_id).is_err());
+        assert!(!error.contains("private-broken.pdf"));
+        assert!(!error.contains(&path.to_string_lossy().to_string()));
+    }
 
     #[test]
     fn saved_text_identity_comes_from_reread_destination() {

@@ -77,6 +77,13 @@ export async function pickImage(): Promise<ImageSession | null> {
   return invoke<ImageSession | null>("pick_image");
 }
 
+export async function openDroppedImage(path: string): Promise<ImageSession> {
+  if (!isDesktop()) {
+    throw new Error("Image metadata cleaning is available in the VeilSend desktop app.");
+  }
+  return invoke<ImageSession>("open_image_path", { path });
+}
+
 export async function pasteImage(): Promise<ImageSession> {
   if (!isDesktop()) {
     throw new Error("Screenshot paste is available in the VeilSend desktop app.");
@@ -107,6 +114,13 @@ export async function pickPdf(): Promise<PdfSession | null> {
     throw new Error("PDF safety copies are available in the VeilSend desktop app.");
   }
   return invoke<PdfSession | null>("pick_pdf");
+}
+
+export async function openDroppedPdf(path: string): Promise<PdfSession> {
+  if (!isDesktop()) {
+    throw new Error("PDF safety copies are available in the VeilSend desktop app.");
+  }
+  return invoke<PdfSession>("open_pdf_path", { path });
 }
 
 export async function getPdfPagePreview(
