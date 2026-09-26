@@ -1,7 +1,7 @@
 use std::{
     io::{Cursor, Read},
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, MutexGuard},
 };
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
@@ -92,9 +92,21 @@ pub struct ResolvedPdfSession {
 }
 
 #[derive(Default)]
-pub struct PdfSessionStore(Mutex<Option<StoredPdfSession>>);
+pub struct PdfSessionStore {
+    active: Mutex<Option<StoredPdfSession>>,
+    replacement: Mutex<()>,
+}
 
 impl PdfSessionStore {
+    pub fn begin_replacement(&self) -> Result<MutexGuard<'_, ()>, String> {
+        let guard = self
+            .replacement
+            .lock()
+            .map_err(|_| "The PDF replacement could not be started.".to_owned())?;
+        self.clear_unlocked()?;
+        Ok(guard)
+    }
+
     pub fn replace(&self, prepared: PreparedPdfSession) -> Result<PdfSessionSummary, String> {
         if fingerprint(&prepared.source_bytes) != prepared.fingerprint {
             return Err("The PDF changed while its review session was opening.".to_owned());
@@ -109,15 +121,19 @@ impl PdfSessionStore {
         };
         let summary = summarize(&stored);
         *self
-            .0
+            .active
             .lock()
             .map_err(|_| "The new PDF session could not be stored.".to_owned())? = Some(stored);
         Ok(summary)
     }
 
     pub fn resolve(&self, id: &str) -> Result<ResolvedPdfSession, String> {
+        let _guard = self
+            .replacement
+            .lock()
+            .map_err(|_| "The active PDF session could not be opened.".to_owned())?;
         let stored = self
-            .0
+            .active
             .lock()
             .map_err(|_| "The active PDF session could not be opened.".to_owned())?
             .as_ref()
@@ -140,8 +156,16 @@ impl PdfSessionStore {
     }
 
     pub fn clear(&self) -> Result<(), String> {
+        let _guard = self
+            .replacement
+            .lock()
+            .map_err(|_| "The active PDF session could not be cleared.".to_owned())?;
+        self.clear_unlocked()
+    }
+
+    fn clear_unlocked(&self) -> Result<(), String> {
         *self
-            .0
+            .active
             .lock()
             .map_err(|_| "The active PDF session could not be cleared.".to_owned())? = None;
         Ok(())
@@ -332,6 +356,32 @@ fn thumbnail_data_url(bytes: &[u8], max_dimension: u32) -> Result<(String, u32, 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{sync::Arc, time::Duration};
+
+    #[test]
+    fn replacement_guard_orders_preparation_commit_and_explicit_clear() {
+        let store = Arc::new(PdfSessionStore::default());
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("prepared.pdf");
+        std::fs::write(&path, b"%PDF-prepared").unwrap();
+        let file = TempPdf(path.canonicalize().unwrap());
+        let old_guard = store.begin_replacement().unwrap();
+        let (attempted_tx, attempted_rx) = std::sync::mpsc::channel();
+        let (cleared_tx, cleared_rx) = std::sync::mpsc::channel();
+        let next_store = Arc::clone(&store);
+        let next = std::thread::spawn(move || {
+            attempted_tx.send(()).unwrap();
+            next_store.clear().unwrap();
+            cleared_tx.send(()).unwrap();
+        });
+        attempted_rx.recv().unwrap();
+        assert!(cleared_rx.recv_timeout(Duration::from_millis(30)).is_err());
+        let session = store.replace(prepared(&file)).unwrap();
+        drop(old_guard);
+        cleared_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        next.join().unwrap();
+        assert!(store.resolve(&session.session_id).is_err());
+    }
 
     struct TempPdf(PathBuf);
 

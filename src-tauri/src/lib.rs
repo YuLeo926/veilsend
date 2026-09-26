@@ -84,6 +84,7 @@ struct CleanedImageFile {
 
 const MAX_SAVED_IMAGE_BYTES: usize = 100 * 1024 * 1024;
 const MAX_SAVED_TEXT_BYTES: usize = 10 * 1024 * 1024;
+const MAX_DECODED_IMAGE_PIXELS: u64 = 40_000_000;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -258,24 +259,24 @@ fn validate_local_file(path: &Path, extensions: &[&str]) -> Result<(), String> {
 }
 
 fn load_image_path(path: PathBuf, store: &ImageSessionStore) -> Result<ImageSession, String> {
-    // A replacement attempt invalidates the previous review even if validation fails.
-    store.clear()?;
+    // The guard serializes the entire replacement, including failure cleanup.
+    let _replacement = store.begin_replacement()?;
     let loaded = (|| {
         validate_local_file(&path, &["jpg", "jpeg", "png"])?;
         let summary = store.replace_file(&path)?;
-        let resolved = store.resolve(&summary.id)?;
+        let resolved = store.resolve_unlocked(&summary.id)?;
         let (session, reviewed) = build_image_session(summary, &resolved.bytes)?;
         store.set_reviewed(&session.session_id, reviewed)?;
         Ok(session)
     })();
     if loaded.is_err() {
-        store.clear()?;
+        store.clear_unlocked()?;
     }
     loaded
 }
 
 fn load_pdf_path(path: PathBuf, store: &PdfSessionStore) -> Result<PdfSessionSummary, String> {
-    store.clear()?;
+    let _replacement = store.begin_replacement()?;
     validate_local_file(&path, &["pdf"])?;
     let prepared = run_on_dedicated_pdf_thread("The PDF inspection", move || {
         pdf_sessions::prepare_pdf_file(&path)
@@ -361,11 +362,18 @@ async fn paste_image(
     })
     .await
     .map_err(|error| format!("The clipboard check could not finish: {error}"))??;
-    let summary = state.replace_clipboard(bytes)?;
-    let resolved = state.resolve(&summary.id)?;
-    let (session, reviewed) = build_image_session(summary, &resolved.bytes)?;
-    state.set_reviewed(&session.session_id, reviewed)?;
-    Ok(session)
+    let _replacement = state.begin_replacement()?;
+    let loaded = (|| {
+        let summary = state.replace_clipboard(bytes)?;
+        let resolved = state.resolve_unlocked(&summary.id)?;
+        let (session, reviewed) = build_image_session(summary, &resolved.bytes)?;
+        state.set_reviewed(&session.session_id, reviewed)?;
+        Ok(session)
+    })();
+    if loaded.is_err() {
+        state.clear_unlocked()?;
+    }
+    loaded
 }
 
 #[tauri::command]
@@ -682,6 +690,7 @@ fn build_image_session(
         return Err("The source image changed while its review session was opening.".to_owned());
     }
     let inspection = inspect_image(bytes, DEFAULT_MAX_IMAGE_BYTES).map_err(format_core_error)?;
+    validate_image_pixels(&inspection)?;
     let visual = inspect_visual(bytes);
     let reviewed = visual.snapshot();
     Ok((
@@ -698,6 +707,19 @@ fn build_image_session(
         },
         reviewed,
     ))
+}
+
+fn validate_image_pixels(inspection: &ImageInspection) -> Result<(), String> {
+    let (Some(width), Some(height)) = (inspection.width, inspection.height) else {
+        return Err("The image dimensions could not be read safely.".to_owned());
+    };
+    if width == 0 || height == 0 || u64::from(width) * u64::from(height) > MAX_DECODED_IMAGE_PIXELS
+    {
+        return Err(format!(
+            "The image expands beyond VeilSend's {MAX_DECODED_IMAGE_PIXELS}-pixel local safety limit."
+        ));
+    }
+    Ok(())
 }
 
 fn read_image_with_limit(path: &Path, max_bytes: usize) -> Result<Vec<u8>, String> {
@@ -810,14 +832,90 @@ pub fn run() {
 mod path_tests {
     use super::{
         load_image_path, load_pdf_path, run_on_dedicated_pdf_thread, same_path,
-        validate_local_file, write_new_text_copy, write_new_text_copy_with_reread_limit,
-        write_new_text_copy_with_reread_limit_and_hook,
+        validate_image_pixels, validate_local_file, write_new_text_copy,
+        write_new_text_copy_with_reread_limit, write_new_text_copy_with_reread_limit_and_hook,
     };
     use crate::{
         image_sessions::ImageSessionStore,
         pdf_sessions::{PdfSessionStore, PreparedPdfSession},
     };
     use veilsend_core::fingerprint;
+
+    #[test]
+    fn compressed_image_with_oversized_dimensions_is_rejected_before_decode() {
+        let mut encoded = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::new_rgb8(1, 1)
+            .write_to(&mut encoded, image::ImageFormat::Png)
+            .unwrap();
+        let mut bytes = encoded.into_inner();
+        bytes[16..20].copy_from_slice(&10_000_u32.to_be_bytes());
+        bytes[20..24].copy_from_slice(&5_000_u32.to_be_bytes());
+        let crc = bytes[12..29].iter().fold(0xffff_ffff_u32, |mut crc, byte| {
+            crc ^= u32::from(*byte);
+            for _ in 0..8 {
+                crc = (crc >> 1) ^ if crc & 1 == 1 { 0xedb8_8320 } else { 0 };
+            }
+            crc
+        }) ^ 0xffff_ffff;
+        bytes[29..33].copy_from_slice(&crc.to_be_bytes());
+        let inspection =
+            veilsend_core::inspect_image(&bytes, veilsend_core::DEFAULT_MAX_IMAGE_BYTES).unwrap();
+        assert_eq!(
+            (inspection.width, inspection.height),
+            (Some(10_000), Some(5_000))
+        );
+        assert!(validate_image_pixels(&inspection).is_err());
+
+        let store = ImageSessionStore::default();
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("compressed.png");
+        std::fs::write(&path, &bytes).unwrap();
+        let error = load_image_path(path, &store).unwrap_err();
+        assert!(error.contains("40000000"));
+    }
+
+    #[test]
+    fn successful_image_path_commits_a_reviewed_session() {
+        let mut encoded = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::new_rgb8(1, 1)
+            .write_to(&mut encoded, image::ImageFormat::Png)
+            .unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("small.png");
+        std::fs::write(&path, encoded.into_inner()).unwrap();
+        let store = ImageSessionStore::default();
+        let session = load_image_path(path, &store).unwrap();
+        assert!(
+            store
+                .resolve(&session.session_id)
+                .unwrap()
+                .reviewed
+                .is_some()
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn successful_pdf_path_commits_a_prepared_session() {
+        let source = veilsend_core::build_flattened_pdf(
+            &[veilsend_core::PdfPageRaster {
+                width_pixels: 20,
+                height_pixels: 30,
+                width_points: 72.0,
+                height_points: 108.0,
+                rgb_bytes: vec![240; 20 * 30 * 3],
+            }],
+            veilsend_core::PdfBuildLimits::default(),
+        )
+        .unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("small.pdf");
+        std::fs::write(&path, source).unwrap();
+        let store = PdfSessionStore::default();
+        let session = load_pdf_path(path, &store).unwrap();
+        assert_eq!(session.page_count, 1);
+        assert!(store.resolve(&session.session_id).is_ok());
+    }
 
     #[test]
     fn dropped_path_must_be_a_regular_file_with_the_expected_extension() {
