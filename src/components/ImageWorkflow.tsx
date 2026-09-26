@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useImperativeHandle, useMemo, useRef, useState, type Ref } from "react";
 import {
   AlertTriangle,
   ArrowLeft,
@@ -53,6 +53,11 @@ import { VerificationReceipt } from "./VerificationReceipt";
 type Stage = "add" | "review" | "result";
 const cleanupFailureMessage = "Could not clear the previous image session. Restart VeilSend before choosing another image.";
 
+export interface ImageWorkflowHandle {
+  // The callback may unmount this workflow only after its cleanup gate succeeds.
+  leave: (onLeave: () => void) => Promise<void>;
+}
+
 const severityLabel: Record<Severity, string> = {
   low: "Notice",
   medium: "Review",
@@ -101,6 +106,8 @@ export function ImageWorkflow({
   onError,
   onDiagnosticsChange,
   runtimeInfo = null,
+  navigationRef,
+  onBusyChange,
 }: {
   stage: Stage;
   onStageChange: (stage: Stage) => void;
@@ -108,6 +115,8 @@ export function ImageWorkflow({
   onError: (message: string, code?: DiagnosticErrorCode) => void;
   onDiagnosticsChange: (next: WorkflowDiagnostics) => void;
   runtimeInfo?: RuntimeInfo | null;
+  navigationRef?: Ref<ImageWorkflowHandle>;
+  onBusyChange?: (busy: boolean) => void;
 }) {
   const [session, setSession] = useState<ImageSession | null>(null);
   const [result, setResult] = useState<CleanedImageFile | null>(null);
@@ -116,6 +125,8 @@ export function ImageWorkflow({
   // Synchronous gate also covers reentrant calls before React renders disabled controls.
   const operationState = useRef<"idle" | "working" | "cleanup">("idle");
   const operationGeneration = useRef(0);
+
+  useImperativeHandle(navigationRef, () => ({ leave: leaveWorkflow }));
 
   useEffect(() => () => { operationGeneration.current += 1; }, []);
 
@@ -193,6 +204,7 @@ export function ImageWorkflow({
   function setOperationState(next: "idle" | "working" | "cleanup") {
     operationState.current = next;
     setBusy(next !== "idle");
+    onBusyChange?.(next !== "idle");
   }
 
   function cancelCurrentOperation(): number {
@@ -279,7 +291,7 @@ export function ImageWorkflow({
     if (operationGeneration.current === token) setOperationState("idle");
   }
 
-  async function switchInputMode(mode: Exclude<InputMode, "image">) {
+  async function leaveWorkflow(onLeave: () => void) {
     if (operationState.current !== "idle") return;
     const token = cancelCurrentOperation();
     try {
@@ -290,9 +302,15 @@ export function ImageWorkflow({
       return;
     }
     if (operationGeneration.current !== token) return;
-    setOperationState("idle");
     onError("");
-    onSwitchMode(mode);
+    // Keep the synchronous gate closed until the parent unmounts this instance.
+    // A brand reset and the mode tabs must not start competing cleanups.
+    onLeave();
+    onBusyChange?.(false);
+  }
+
+  function switchInputMode(mode: Exclude<InputMode, "image">) {
+    return leaveWorkflow(() => onSwitchMode(mode));
   }
 
   if (stage === "add") {

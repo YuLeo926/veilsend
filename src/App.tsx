@@ -28,7 +28,7 @@ import {
   UserRound,
   X,
 } from "lucide-react";
-import { ImageWorkflow } from "./components/ImageWorkflow";
+import { ImageWorkflow, type ImageWorkflowHandle } from "./components/ImageWorkflow";
 import { InputModeTabs, type InputMode } from "./components/InputModeTabs";
 import { PdfWorkflow } from "./components/PdfWorkflow";
 import { TrustCenter, type TrustRuntimeState } from "./components/TrustCenter";
@@ -55,6 +55,7 @@ import type {
 } from "./lib/types";
 
 type Stage = "add" | "review" | "result";
+type TextCleanResult = SanitizeResult & { findingsRedacted: number };
 
 const MAX_BYTES = 10 * 1024 * 1024;
 const acceptedExtensions = ["env", "json", "log", "txt"];
@@ -134,6 +135,7 @@ function FindingCard({
   decision,
   rawValue,
   revealed,
+  disabled,
   onReveal,
   onDecision,
 }: {
@@ -141,6 +143,7 @@ function FindingCard({
   decision: FindingDecision;
   rawValue: string;
   revealed: boolean;
+  disabled: boolean;
   onReveal: () => void;
   onDecision: (next: FindingDecision) => void;
 }) {
@@ -152,6 +155,7 @@ function FindingCard({
         <button
           className="finding-check"
           type="button"
+          disabled={disabled}
           onClick={() => onDecision({ ...decision, enabled: !decision.enabled })}
           aria-label={decision.enabled ? `Exclude ${finding.label}` : `Include ${finding.label}`}
           aria-pressed={decision.enabled}
@@ -183,7 +187,7 @@ function FindingCard({
           <span>Replace with</span>
           <input
             value={decision.replacement}
-            disabled={!decision.enabled}
+            disabled={disabled || !decision.enabled}
             onChange={(event) => onDecision({ ...decision, replacement: event.target.value })}
             spellCheck={false}
           />
@@ -203,8 +207,9 @@ function App() {
   const [report, setReport] = useState<ScanReport | null>(null);
   const [decisions, setDecisions] = useState<Record<string, FindingDecision>>({});
   const [revealed, setRevealed] = useState<Set<string>>(new Set());
-  const [result, setResult] = useState<SanitizeResult | null>(null);
+  const [result, setResult] = useState<TextCleanResult | null>(null);
   const [busy, setBusy] = useState(false);
+  const [imageBusy, setImageBusy] = useState(false);
   const [error, setError] = useState("");
   const [dropActive, setDropActive] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -217,7 +222,10 @@ function App() {
   const fileInput = useRef<HTMLInputElement>(null);
   const trustTrigger = useRef<HTMLButtonElement>(null);
   const textOperationGeneration = useRef(0);
+  // Protect operation inputs even before React renders disabled controls.
+  const textOperationPending = useRef(false);
   const currentMode = useRef<InputMode>("text");
+  const imageWorkflow = useRef<ImageWorkflowHandle>(null);
 
   const options: ScanOptions = useMemo(() => ({
     maxBytes: MAX_BYTES,
@@ -281,10 +289,15 @@ function App() {
     detectors: activeDiagnostics.detectors,
   }), [activeDiagnostics, diagnosticError]);
 
+  function setTextBusy(next: boolean) {
+    textOperationPending.current = next;
+    setBusy(next);
+  }
+
   function invalidateTextOperations(nextMode: InputMode) {
     textOperationGeneration.current += 1;
     currentMode.current = nextMode;
-    setBusy(false);
+    setTextBusy(false);
     setSavedFile(null);
   }
 
@@ -305,6 +318,7 @@ function App() {
       : ShieldAlert;
 
   async function acceptFile(file: File) {
+    if (textOperationPending.current || currentMode.current !== "text") return;
     const token = ++textOperationGeneration.current;
     setWorkflowError("");
     const extension = file.name.split(".").pop()?.toLowerCase() ?? "";
@@ -329,13 +343,15 @@ function App() {
   }
 
   async function runScan() {
+    if (textOperationPending.current || currentMode.current !== "text") return;
     if (!text.trim()) {
       setWorkflowError("Paste some text or choose a supported file first.", "inputRejected");
       return;
     }
     const token = ++textOperationGeneration.current;
     setSavedFile(null);
-    setBusy(true);
+    setTextBusy(true);
+    setDropActive(false);
     setWorkflowError("");
     try {
       const nextReport = await scanText(text, options);
@@ -352,36 +368,46 @@ function App() {
       if (!isCurrentTextOperation(token)) return;
       setWorkflowError(readableError(scanError));
     } finally {
-      if (isCurrentTextOperation(token)) setBusy(false);
+      if (isCurrentTextOperation(token)) setTextBusy(false);
     }
   }
 
   async function runClean() {
-    if (!report) return;
+    if (!report || textOperationPending.current || currentMode.current !== "text") return;
     const token = ++textOperationGeneration.current;
+    const submittedDecisions = Object.values(decisions).map((decision) => ({ ...decision }));
+    const findingsRedacted = submittedDecisions.filter((decision) => decision.enabled).length;
     setSavedFile(null);
-    setBusy(true);
+    setTextBusy(true);
     setWorkflowError("");
     try {
       const nextResult = await sanitizeText({
         originalText: text,
         contentFingerprint: report.contentFingerprint,
         findings: report.findings,
-        decisions: Object.values(decisions),
+        decisions: submittedDecisions,
         options,
       });
       if (!isCurrentTextOperation(token)) return;
-      setResult(nextResult);
+      setResult({ ...nextResult, findingsRedacted });
       setStage("result");
     } catch (cleanError) {
       if (!isCurrentTextOperation(token)) return;
       setWorkflowError(readableError(cleanError));
     } finally {
-      if (isCurrentTextOperation(token)) setBusy(false);
+      if (isCurrentTextOperation(token)) setTextBusy(false);
     }
   }
 
   function reset() {
+    if (currentMode.current === "image") {
+      void imageWorkflow.current?.leave(resetToText);
+      return;
+    }
+    resetToText();
+  }
+
+  function resetToText() {
     invalidateTextOperations("text");
     setStage("add");
     setMode("text");
@@ -397,6 +423,14 @@ function App() {
   }
 
   function switchMode(nextMode: InputMode) {
+    if (currentMode.current === "image") {
+      void imageWorkflow.current?.leave(() => completeModeSwitch(nextMode));
+      return;
+    }
+    completeModeSwitch(nextMode);
+  }
+
+  function completeModeSwitch(nextMode: InputMode) {
     invalidateTextOperations(nextMode);
     setMode(nextMode);
     setStage("add");
@@ -429,7 +463,7 @@ function App() {
     <div className="app-shell">
       <div className="paper-grain" aria-hidden="true" />
       <header className="app-header">
-        <button className="brand" type="button" onClick={reset} aria-label="Start a new VeilSend scan">
+        <button className="brand" type="button" disabled={imageBusy} onClick={reset} aria-label="Start a new VeilSend scan">
           <span className="brand-mark"><ShieldCheck size={22} strokeWidth={2.3} /></span>
           <span><strong>VeilSend</strong><small>Outbound safety, on-device</small></span>
         </button>
@@ -477,7 +511,16 @@ function App() {
 
               <div
                 className={`input-card ${dropActive ? "drop-active" : ""}`}
-                onDragOver={(event) => { event.preventDefault(); setDropActive(true); }}
+                aria-disabled={busy}
+                aria-busy={busy}
+                onDragOver={(event) => {
+                  event.preventDefault();
+                  if (textOperationPending.current) {
+                    event.dataTransfer.dropEffect = "none";
+                    return;
+                  }
+                  setDropActive(true);
+                }}
                 onDragLeave={() => setDropActive(false)}
                 onDrop={(event) => {
                   event.preventDefault();
@@ -491,25 +534,27 @@ function App() {
                     <span><FileText size={18} /></span>
                     <div><strong>{filename}</strong><small>{text ? `${formatBytes(new TextEncoder().encode(text).byteLength)} ready to scan` : "Paste text below or drop a file here"}</small></div>
                   </div>
-                  {text && <button className="quiet-button" type="button" onClick={() => { setText(""); setFilename("pasted-text.txt"); setWorkflowError(""); }}><X size={15} /> Clear</button>}
+                  {text && <button className="quiet-button" type="button" disabled={busy} onClick={() => { if (textOperationPending.current) return; setText(""); setFilename("pasted-text.txt"); setWorkflowError(""); }}><X size={15} /> Clear</button>}
                 </div>
                 <textarea
                   className="source-input"
                   value={text}
-                  onChange={(event) => { setText(event.target.value); setFilename("pasted-text.txt"); setWorkflowError(""); }}
+                  disabled={busy}
+                  onChange={(event) => { if (textOperationPending.current) return; setText(event.target.value); setFilename("pasted-text.txt"); setWorkflowError(""); }}
                   placeholder={`Paste terminal output, a debug log, JSON, or .env content…\n\nVeilSend will not send it anywhere.`}
                   spellCheck={false}
                   aria-label="Content to scan"
                 />
                 <div className="input-card-footer">
                   <div className="input-options">
-                    <button className="secondary-button" type="button" onClick={() => fileInput.current?.click()}>
+                    <button className="secondary-button" type="button" disabled={busy} onClick={() => { if (!textOperationPending.current) fileInput.current?.click(); }}>
                       <Upload size={16} /> Choose file
                     </button>
                     <input
                       ref={fileInput}
                       className="visually-hidden"
                       type="file"
+                      disabled={busy}
                       accept=".txt,.log,.json,.env,text/plain,application/json"
                       onChange={(event) => {
                         const file = event.target.files?.[0];
@@ -517,7 +562,7 @@ function App() {
                         event.target.value = "";
                       }}
                     />
-                    <button className="text-button" type="button" onClick={() => { setText(syntheticSample); setFilename("synthetic-support-log.txt"); setCustomTerms("Project Firefly"); setWorkflowError(""); }}>
+                    <button className="text-button" type="button" disabled={busy} onClick={() => { if (textOperationPending.current) return; setText(syntheticSample); setFilename("synthetic-support-log.txt"); setCustomTerms("Project Firefly"); setWorkflowError(""); }}>
                       <Sparkles size={15} /> Try safe sample
                     </button>
                   </div>
@@ -533,7 +578,7 @@ function App() {
                 <summary><Plus size={15} /> Add sensitive words for this scan</summary>
                 <label>
                   <span>Project names, customer names, or internal codenames — one per line</span>
-                  <textarea value={customTerms} onChange={(event) => setCustomTerms(event.target.value)} placeholder="Project Firefly&#10;Example Customer" />
+                  <textarea value={customTerms} disabled={busy} onChange={(event) => { if (!textOperationPending.current) setCustomTerms(event.target.value); }} placeholder="Project Firefly&#10;Example Customer" />
                 </label>
               </details>
 
@@ -547,7 +592,7 @@ function App() {
 
           {mode === "text" && stage === "review" && report && (
             <section className="stage-view review-stage">
-              <button className="back-button" type="button" onClick={() => setStage("add")}><ArrowLeft size={16} /> Back to source</button>
+              <button className="back-button" type="button" disabled={busy} onClick={() => { if (!textOperationPending.current) setStage("add"); }}><ArrowLeft size={16} /> Back to source</button>
               <div className="review-heading">
                 <div>
                   <div className="eyebrow"><FileSearch size={15} /> Review before cleaning</div>
@@ -576,12 +621,15 @@ function App() {
                           decision={decisions[finding.id]}
                           rawValue={isDesktop() ? sliceUtf8Range(text, finding.start, finding.end) : text.slice(finding.start, finding.end)}
                           revealed={revealed.has(finding.id)}
+                          disabled={busy}
                           onReveal={() => setRevealed((current) => {
                             const next = new Set(current);
                             if (next.has(finding.id)) next.delete(finding.id); else next.add(finding.id);
                             return next;
                           })}
-                          onDecision={(next) => setDecisions((current) => ({ ...current, [finding.id]: next }))}
+                          onDecision={(next) => {
+                            if (!textOperationPending.current) setDecisions((current) => ({ ...current, [finding.id]: next }));
+                          }}
                         />
                       ))}
                     </div>
@@ -649,7 +697,7 @@ function App() {
               </div>
 
               {savedFile && (
-                <VerificationReceipt data={textVerificationReceipt(runtimeInfo, savedFile, result, selectedCount)} />
+                <VerificationReceipt data={textVerificationReceipt(runtimeInfo, savedFile, result, result.findingsRedacted)} />
               )}
 
               <div className="result-footer">
@@ -663,10 +711,12 @@ function App() {
             <ImageWorkflow
               stage={stage}
               onStageChange={setStage}
-              onSwitchMode={switchMode}
+              onSwitchMode={completeModeSwitch}
               onError={setWorkflowError}
               onDiagnosticsChange={onWorkflowDiagnosticsChange}
               runtimeInfo={runtimeInfo}
+              navigationRef={imageWorkflow}
+              onBusyChange={setImageBusy}
             />
           )}
 

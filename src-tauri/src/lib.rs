@@ -131,6 +131,9 @@ fn write_new_text_copy_with_reread_limit_and_hook(
         if saved_bytes.len() > reread_limit {
             return Err("The saved clean copy exceeds VeilSend's local safety limit.".to_owned());
         }
+        if saved_bytes != content.as_bytes() {
+            return Err("The saved text bytes do not match the verified local output.".to_owned());
+        }
         if !path_names_open_file(&file, path)? {
             return Err(
                 "The saved clean copy changed at its destination before verification.".to_owned(),
@@ -807,6 +810,60 @@ mod path_tests {
         let retry = write_new_text_copy(&path, "verified retry").unwrap();
         assert_eq!(std::fs::read(&path).unwrap(), b"verified retry");
         assert_eq!(retry.saved_fingerprint, fingerprint(b"verified retry"));
+    }
+
+    #[test]
+    fn saved_text_identity_rejects_in_place_changes_after_sync() {
+        for changed_bytes in [
+            b"altered bytes".as_slice(), // Same length as the verified input.
+            b"short",
+            b"a longer unverified replacement",
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join("cleaned.txt");
+            let error =
+                write_new_text_copy_with_reread_limit_and_hook(&path, "created bytes", 64, || {
+                    let original_object = same_file::Handle::from_path(&path).unwrap();
+                    // The hook runs after sync_all and before the owned handle is reread.
+                    // Truncating this path mutates the same object; it does not replace it.
+                    std::fs::write(&path, changed_bytes).unwrap();
+                    assert_eq!(
+                        original_object,
+                        same_file::Handle::from_path(&path).unwrap()
+                    );
+                    assert_eq!(std::fs::read(&path).unwrap(), changed_bytes);
+                    Ok(())
+                })
+                .unwrap_err();
+
+            assert!(error.contains("do not match the verified local output"));
+            assert!(!path.exists(), "the changed owned copy must be removed");
+            let retry = write_new_text_copy(&path, "verified retry").unwrap();
+            assert_eq!(retry.saved_fingerprint, fingerprint(b"verified retry"));
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn changed_text_copy_cleanup_preserves_a_replacement_at_the_final_path() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("cleaned.txt");
+        let renamed = directory.path().join("renamed-owned.txt");
+        let error =
+            write_new_text_copy_with_reread_limit_and_hook(&path, "created bytes", 64, || {
+                std::fs::write(&path, b"altered bytes").unwrap();
+                std::fs::rename(&path, &renamed).unwrap();
+                std::fs::write(&path, b"sentinel replacement").unwrap();
+                Ok(())
+            })
+            .unwrap_err();
+
+        assert!(error.contains("do not match the verified local output"));
+        assert!(
+            !renamed.exists(),
+            "cleanup must remove only the owned object"
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), b"sentinel replacement");
     }
 
     #[cfg(windows)]
