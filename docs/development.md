@@ -16,6 +16,8 @@ cargo check --locked -p veilsend
 cargo audit
 ```
 
+The release documentation contract runs under `npm run test:release`. For visual changes to PDF covers or zoom, run `node scripts/check-pdf-overlay-layout.mjs` on Windows with installed Edge, or pass an absolute Edge/Chromium executable path. It checks actual browser geometry at percentage and fit zoom levels; complete the separate packaged-app PDF acceptance flow before release.
+
 For the final offline executable, use `npm run tauri -- build --no-bundle -- --locked`. A plain `cargo build --release` does not run the frontend build or enable Tauri's embedded custom protocol and may leave the executable pointing at the development server. The separator before `--locked` passes that flag to Tauri's Cargo runner; `npm run tauri build -- --locked` is not equivalent and this Tauri CLI rejects it as an unknown top-level option.
 
 The last check compiles the Windows desktop shell and therefore requires local endpoint security to allow Cargo-generated build scripts. Do not disable endpoint security automatically. If an organization blocks `target/**/build-script-build.exe`, ask its administrator to approve the Rust/Tauri build workflow or build in an approved development environment.

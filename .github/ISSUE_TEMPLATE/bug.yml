@@ -1,0 +1,62 @@
+name: Bug report (synthetic only)
+description: Report a reproducible defect without private data.
+title: "[Bug] "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Never attach real files, paths, content, screenshots, logs, OCR text, decoded QR/barcode payloads, or credential samples. Use only synthetic fixtures and fake values. Report vulnerabilities through GitHub private vulnerability reporting, not this public form.
+  - type: input
+    id: version
+    attributes:
+      label: Version and build commit
+      description: Use the version and abbreviated build commit shown in About; do not include local paths.
+      placeholder: "0.2.0-beta.1, commit abcdef0"
+    validations:
+      required: true
+  - type: dropdown
+    id: input-kind
+    attributes:
+      label: Input kind
+      options: [Text, JPEG/PNG image, Screenshot paste, PDF, Installation, Other]
+    validations:
+      required: true
+  - type: input
+    id: error-code
+    attributes:
+      label: Safe error code
+      description: Provide only the app's code or short state label, not copied diagnostic text that might contain source data.
+      placeholder: "Needs review / code only"
+    validations:
+      required: false
+  - type: textarea
+    id: detector-states
+    attributes:
+      label: Detector states
+      description: List completed, incomplete, or unavailable detector names and receipt states only. No findings, OCR text, payloads, file names, or paths.
+      placeholder: "OCR completed; face unavailable; QR completed; receipt Needs review"
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Synthetic reproduction
+      description: Use a repository fixture or clearly fake values under reserved example domains. Do not attach real samples.
+      placeholder: "With a synthetic fixture, take these steps..."
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected and actual behavior
+      description: Describe states or behavior without source content.
+    validations:
+      required: true
+  - type: checkboxes
+    id: privacy-confirmation
+    attributes:
+      label: Privacy confirmation
+      options:
+        - label: I used only synthetic data and included no real files, paths, content, screenshots, logs, OCR text, or decoded payloads.
+          required: true

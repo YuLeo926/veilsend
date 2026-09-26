@@ -6,6 +6,10 @@ VeilSend is a local-first outbound safety gate for text, logs, configuration fil
 
 > VeilSend reduces accidental disclosure. It does not guarantee that content is safe and is not a compliance product.
 
+## 0.2.0-beta.1 candidate
+
+The Windows 10/11 x64 beta is an unsigned pre-release candidate. The capabilities below are implemented in source, but the public release and clean-Windows acceptance have not yet been completed. Keep originals and review every result; `Verified` describes completed supported checks, not universal safety.
+
 ## Current milestone
 
 Milestone D includes the complete text and image workflows plus a Windows-only flattened PDF safety path:
@@ -84,7 +88,17 @@ npm run tauri dev
 
 ## Download the Windows beta
 
-Official binaries are published only through the project's GitHub Releases. VeilSend 0.2.0-beta.1 is an **unsigned pre-release**: SmartScreen may warn before its first run. Download either `VeilSend_0.2.0-beta.1_x64-setup-UNSIGNED.exe` for the current-user installer or `VeilSend_0.2.0-beta.1_x64-portable-UNSIGNED.zip` for the portable app, together with `SHA256SUMS.txt` from the same Release.
+When published, official binaries will be available only through the [VeilSend GitHub pre-releases](https://github.com/YuLeo926/veilsend/releases). **No public download or clean-Windows validation is claimed by this candidate documentation.** VeilSend 0.2.0-beta.1 is an **unsigned pre-release**: Microsoft SmartScreen may warn before its first run. A warning does not prove a file is authentic.
+
+| Planned Release asset | Purpose |
+| --- | --- |
+| `VeilSend_0.2.0-beta.1_x64-setup-UNSIGNED.exe` | Current-user Windows setup, no administrator rights required |
+| `VeilSend_0.2.0-beta.1_x64-portable-UNSIGNED.zip` | Portable app; extract before launching |
+| `SHA256SUMS.txt` | SHA-256 manifest for the installer, ZIP, and SBOM |
+| `veilsend-0.2.0-beta.1-sbom.cdx.json` | CycloneDX software bill of materials (SBOM) |
+| GitHub build-provenance attestation | Verify the published assets against the repository workflow |
+
+The portable ZIP is expected to contain only `VeilSend.exe`, `LICENSE`, `RELEASE_NOTES.md`, and `THIRD_PARTY_LICENSES.md`. Download the chosen binary, `SHA256SUMS.txt`, and the SBOM from the same GitHub pre-release, and verify its GitHub attestation before running it. A hash copied from an unrelated page is not an independent trust check.
 
 Verify the downloaded filename and SHA-256 before running it:
 
@@ -93,7 +107,7 @@ Get-FileHash -Algorithm SHA256 .\VeilSend_0.2.0-beta.1_x64-setup-UNSIGNED.exe
 Get-Content .\SHA256SUMS.txt
 ```
 
-The displayed hash must exactly match the entry in `SHA256SUMS.txt`. The installer is current-user only and may use Microsoft's WebView2 bootstrapper if that Windows runtime is unavailable. After installation, scanning, redaction, verification, and saving work offline; VeilSend has no updater, analytics, crash uploads, or background service. Read [the beta release notes](RELEASE_NOTES.md) before installing.
+The displayed hash must exactly match the entry in `SHA256SUMS.txt`. See the [release runbook](docs/release.md) for the asset and provenance verifier. The installer may need Microsoft's WebView2 bootstrapper and a network connection when that runtime is unavailable. VeilSend **works offline after installation** for scanning, redaction, verification, and saving; it has no updater, analytics, crash uploads, or background service. Read [the beta release notes](RELEASE_NOTES.md) before installing.
 
 Use **Try safe sample** in text mode. Image mode opens local JPEG and PNG files through the native file picker or accepts a bitmap from the focused Windows clipboard. PDF mode opens `fixtures/pdf-sensitive-sample.pdf` for the bounded three-page acceptance flow. All repository fixtures are synthetic.
 
@@ -157,6 +171,9 @@ The browser preview itself is delivered by a local Vite server during developmen
 - [Flattened PDF implementation plan](docs/superpowers/plans/2026-08-23-veilsend-pdf-redaction.md)
 - [Security policy and threat model](SECURITY.md)
 - [Development and verification notes](docs/development.md)
+- [Beta changelog](CHANGELOG.md)
+- [Contribution guide](CONTRIBUTING.md)
+- [Beta release runbook](docs/release.md)
 
 ## License
 
