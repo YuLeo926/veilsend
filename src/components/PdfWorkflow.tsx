@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useReducer, useState } from "react";
+import { useCallback, useEffect, useImperativeHandle, useMemo, useReducer, useRef, useState, type Ref } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import {
   AlertTriangle,
@@ -12,7 +12,9 @@ import {
   Layers3,
   LoaderCircle,
   LockKeyhole,
+  Minus,
   MousePointer2,
+  Plus,
   QrCode,
   RefreshCcw,
   ScanFace,
@@ -26,18 +28,28 @@ import {
   clearPdfSession,
   getPdfPagePreview,
   isDesktop,
+  openDroppedPdf,
   pickPdf,
 } from "../lib/bridge";
+import { useDesktopFileDrop } from "../hooks/useDesktopFileDrop";
+import { dropPrompt } from "../lib/fileDrop";
 import {
   buildPdfDefaultDecisions,
   buildPdfFindings,
   buildPdfPageFindings,
+  clampPdfPage,
+  imageRectPercentStyle,
   normalizedRectangleFromPoints,
   pageChecksComplete,
+  pdfShortcutAction,
   remainingPdfRiskCount,
   resizeNormalizedRectangle,
+  stepPdfZoom,
   type PdfFindingKind,
+  type PdfZoom,
 } from "../lib/pdfWorkflowModel";
+import { derivePdfDiagnostics, type DiagnosticErrorCode, type WorkflowDiagnostics } from "../lib/diagnostics";
+import { pdfVerificationReceipt } from "../lib/verificationReceipt";
 import type {
   CleanedPdfFile,
   ImageRedactionDecision,
@@ -45,11 +57,16 @@ import type {
   PdfManualRegion,
   PdfPagePreview,
   PdfSession,
+  RuntimeInfo,
   Severity,
 } from "../lib/types";
 import { InputModeTabs, type InputMode } from "./InputModeTabs";
+import { VerificationReceipt } from "./VerificationReceipt";
 
 type Stage = "add" | "review" | "result";
+export interface PdfWorkflowHandle {
+  leave: (onLeave: () => void) => Promise<void>;
+}
 type DrawDraft = { originX: number; originY: number; rectangle: NormalizedRect };
 type ResizeDraft = {
   id: string;
@@ -148,11 +165,19 @@ export function PdfWorkflow({
   onStageChange,
   onSwitchMode,
   onError,
+  onDiagnosticsChange,
+  runtimeInfo = null,
+  navigationRef,
+  onBusyChange,
 }: {
   stage: Stage;
   onStageChange: (stage: Stage) => void;
   onSwitchMode: (mode: Exclude<InputMode, "pdf">) => void;
-  onError: (message: string) => void;
+  onError: (message: string, code?: DiagnosticErrorCode) => void;
+  onDiagnosticsChange: (next: WorkflowDiagnostics) => void;
+  runtimeInfo?: RuntimeInfo | null;
+  navigationRef?: Ref<PdfWorkflowHandle>;
+  onBusyChange?: (busy: boolean) => void;
 }) {
   const [session, setSession] = useState<PdfSession | null>(null);
   const [result, setResult] = useState<CleanedPdfFile | null>(null);
@@ -164,12 +189,53 @@ export function PdfWorkflow({
   const manualRegions = manualEdits.regions;
   const manualHistory = manualEdits.history;
   const [selectedPage, setSelectedPage] = useState(0);
+  const [zoom, setZoom] = useState<PdfZoom>("fitWidth");
+  const canvasRef = useRef<HTMLDivElement>(null);
+  const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
   const [preview, setPreview] = useState<PdfPagePreview | null>(null);
   const [previewBusy, setPreviewBusy] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [dropActive, setDropActive] = useState(false);
+  const operationState = useRef<"idle" | "working" | "cleanup">("idle");
+  const currentStage = useRef(stage);
+  currentStage.current = stage;
   const [drawMode, setDrawMode] = useState(false);
   const [draft, setDraft] = useState<DrawDraft | null>(null);
   const [resizeDraft, setResizeDraft] = useState<ResizeDraft | null>(null);
+  const operationGeneration = useRef(0);
+
+  useImperativeHandle(navigationRef, () => ({ leave: leaveWorkflow }));
+  const setOperationState = useCallback((next: "idle" | "working" | "cleanup") => {
+    operationState.current = next;
+    setBusy(next !== "idle");
+    onBusyChange?.(next !== "idle");
+  }, [onBusyChange]);
+
+  useEffect(() => () => { operationGeneration.current += 1; }, []);
+
+  useEffect(() => {
+    onDiagnosticsChange(derivePdfDiagnostics({
+      stage,
+      inputBytes: stage === "add" ? null : session?.bytes ?? null,
+      pageCount: stage === "add" ? null : session?.pageCount ?? null,
+      pages: session?.pages.map((page) => ({
+        textAvailability: page.ocr.availability,
+        faceAvailability: page.faces.availability,
+        qrAvailability: page.qr.availability,
+        barcodeAvailability: page.barcodes.availability,
+      })) ?? [],
+      resultChecks: result ? {
+        savedBytesMatch: result.verification.savedBytesMatch,
+        pageCountMatch: result.verification.pageCountMatch,
+        pagesRendered: result.verification.pagesRendered,
+        pagesRebuilt: result.pagesRebuilt,
+        text: result.verification.ocrChecked,
+        face: result.verification.faceChecked,
+        qr: result.verification.qrChecked,
+        barcode: result.verification.barcodeChecked,
+      } : null,
+    }));
+  }, [onDiagnosticsChange, result, session, stage]);
 
   const allFindings = useMemo(() => session ? buildPdfFindings(session) : [], [session]);
   const currentPage = session?.pages[selectedPage] ?? null;
@@ -187,6 +253,51 @@ export function PdfWorkflow({
   const exceptions = allFindings.length - selectedFindings;
 
   useEffect(() => {
+    const canvas = canvasRef.current;
+    if (stage !== "review" || !canvas) return;
+    // ResizeObserver's content box excludes padding: both fit modes use the
+    // space actually available inside the scrollport, not the window width.
+    const measure = () => {
+      const style = getComputedStyle(canvas);
+      setCanvasSize({
+        width: Math.max(0, canvas.clientWidth - parseFloat(style.paddingLeft || "0") - parseFloat(style.paddingRight || "0")),
+        height: Math.max(0, canvas.clientHeight - parseFloat(style.paddingTop || "0") - parseFloat(style.paddingBottom || "0")),
+      });
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", measure);
+      return () => window.removeEventListener("resize", measure);
+    }
+    const observer = new ResizeObserver(([entry]) => {
+      setCanvasSize({ width: entry.contentRect.width, height: entry.contentRect.height });
+    });
+    observer.observe(canvas);
+    return () => observer.disconnect();
+  }, [stage, session]);
+
+  useEffect(() => {
+    if (stage !== "review" || busy || !session) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      // TrustCenter owns its keys even before focus moves into the dialog.
+      if (event.defaultPrevented || document.querySelector('[role="dialog"][aria-modal="true"], dialog[open]')) return;
+      const action = pdfShortcutAction(event, currentStage.current, operationState.current !== "idle");
+      if (!action) return;
+      event.preventDefault();
+      if (action === "nextPage" || action === "previousPage") {
+        setDraft(null);
+        setResizeDraft(null);
+        setSelectedPage((page) => clampPdfPage(page, session.pageCount, action === "nextPage" ? 1 : -1));
+      }
+      if (action === "zoomIn") setZoom((value) => stepPdfZoom(value, 1));
+      if (action === "zoomOut") setZoom((value) => stepPdfZoom(value, -1));
+      if (action === "cancelDraft") setDraft(null);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [busy, session, stage]);
+
+  useEffect(() => {
     if (!session || stage !== "review") return;
     let active = true;
     setPreviewBusy(true);
@@ -196,7 +307,7 @@ export function PdfWorkflow({
         if (active) setPreview(nextPreview);
       })
       .catch((error) => {
-        if (active) onError(readableError(error));
+        if (active) onError(readableError(error), "workflowFailed");
       })
       .finally(() => {
         if (active) setPreviewBusy(false);
@@ -204,8 +315,7 @@ export function PdfWorkflow({
     return () => { active = false; };
   }, [onError, selectedPage, session, stage]);
 
-  async function clearCurrentSession() {
-    if (session) await clearPdfSession();
+  const resetSessionView = useCallback(() => {
     setSession(null);
     setPreview(null);
     setDecisions({});
@@ -213,30 +323,57 @@ export function PdfWorkflow({
     setDraft(null);
     setResizeDraft(null);
     setDrawMode(false);
+    setResult(null);
+    setSelectedPage(0);
+    setZoom("fitWidth");
+  }, []);
+
+  async function clearCurrentSession(token: number) {
+    if (session) await clearPdfSession();
+    if (operationGeneration.current === token) resetSessionView();
   }
 
-  async function choosePdf() {
-    setBusy(true);
+  const acceptPdfSession = useCallback((nextSession: PdfSession) => {
+    resetSessionView();
+    setSession(nextSession);
+    setDecisions(buildPdfDefaultDecisions(nextSession));
+    currentStage.current = "review";
+    onStageChange("review");
+  }, [onStageChange, resetSessionView]);
+
+  const acquirePdf = useCallback(async (load: () => Promise<PdfSession | null>) => {
+    if (!isDesktop() || currentStage.current !== "add" || operationState.current !== "idle") return;
+    const token = ++operationGeneration.current;
+    setOperationState("working");
     onError("");
     try {
-      await clearCurrentSession();
-      const nextSession = await pickPdf();
+      // Native accepted loaders own replacement; picker cancellation is a no-op.
+      const nextSession = await load();
+      if (operationGeneration.current !== token) return;
       if (!nextSession) return;
-      setSession(nextSession);
-      setDecisions(buildPdfDefaultDecisions(nextSession));
-      setSelectedPage(0);
-      setResult(null);
-      onStageChange("review");
-    } catch (error) {
-      onError(readableError(error));
+      acceptPdfSession(nextSession);
+    } catch {
+      if (operationGeneration.current !== token) return;
+      resetSessionView();
+      onStageChange("add");
+      onError("Could not open that PDF. Choose one supported PDF document.", "inputRejected");
     } finally {
-      setBusy(false);
+      if (operationGeneration.current === token) setOperationState("idle");
     }
-  }
+  }, [acceptPdfSession, onError, onStageChange, resetSessionView, setOperationState]);
+
+  function choosePdf() { return acquirePdf(pickPdf); }
+  const dropPdf = useCallback((path: string) => acquirePdf(() => openDroppedPdf(path)), [acquirePdf]);
+  useDesktopFileDrop({
+    enabled: stage === "add" && isDesktop(), kind: "pdf", busy,
+    onDrop: dropPdf, onActive: setDropActive,
+    onError: (message) => onError(message, "inputRejected"),
+  });
 
   async function createSafetyCopy() {
-    if (!session || busy) return;
-    setBusy(true);
+    if (!session || operationState.current !== "idle") return;
+    const token = ++operationGeneration.current;
+    setOperationState("working");
     setDraft(null);
     setResizeDraft(null);
     setDrawMode(false);
@@ -247,38 +384,55 @@ export function PdfWorkflow({
         Object.values(decisions),
         manualRegions,
       );
+      if (operationGeneration.current !== token) return;
       if (!nextResult) return;
       setResult(nextResult);
       onStageChange("result");
     } catch (error) {
-      onError(readableError(error));
+      if (operationGeneration.current !== token) return;
+      onError(readableError(error), "workflowFailed");
     } finally {
-      setBusy(false);
+      if (operationGeneration.current === token) setOperationState("idle");
     }
   }
 
   async function startAgain() {
-    let clearError = "";
+    if (operationState.current === "cleanup") return;
+    const token = ++operationGeneration.current;
+    setOperationState("cleanup");
+    onStageChange("add");
     try {
-      await clearCurrentSession();
-    } catch (error) {
-      clearError = readableError(error);
-    } finally {
-      setResult(null);
-      onError(clearError);
-      onStageChange("add");
+      await clearCurrentSession(token);
+    } catch {
+      if (operationGeneration.current !== token) return;
+      onError("Could not clear the previous PDF session. Restart VeilSend before choosing another PDF.", "workflowFailed");
+      return;
     }
+    if (operationGeneration.current !== token) return;
+    onError("");
+    setOperationState("idle");
   }
 
-  async function switchInputMode(mode: Exclude<InputMode, "pdf">) {
+  async function leaveWorkflow(onLeave: () => void) {
+    if (operationState.current !== "idle") return;
+    const token = ++operationGeneration.current;
+    setOperationState("cleanup");
     try {
-      await clearCurrentSession();
-      onError("");
-    } catch (error) {
-      onError(readableError(error));
-    } finally {
-      onSwitchMode(mode);
+      await clearCurrentSession(token);
+    } catch {
+      if (operationGeneration.current !== token) return;
+      onError("Could not clear the previous PDF session. Restart VeilSend before choosing another PDF.", "workflowFailed");
+      return;
     }
+    if (operationGeneration.current !== token) return;
+    onError("");
+    // Keep the gate closed until this instance unmounts; brand and tabs share it.
+    onLeave();
+    onBusyChange?.(false);
+  }
+
+  function switchInputMode(mode: Exclude<InputMode, "pdf">) {
+    return leaveWorkflow(() => onSwitchMode(mode));
   }
 
   function beginDraw(event: ReactPointerEvent<HTMLDivElement>) {
@@ -381,11 +535,13 @@ export function PdfWorkflow({
   if (stage === "add") {
     return (
       <section className="stage-view add-stage pdf-add-stage">
-        <InputModeTabs active="pdf" onChange={(mode) => mode !== "pdf" && void switchInputMode(mode)} />
+        <InputModeTabs active="pdf" disabled={busy} onChange={(mode) => mode !== "pdf" && void switchInputMode(mode)} />
         <div className="eyebrow"><Layers3 size={15} /> Flattened document safety</div>
         <h1>Turn a PDF into<br />pixels you can trust.</h1>
         <p className="lead">Choose a local PDF. VeilSend reviews every page, lets you cover anything the detectors miss, then rebuilds a separate image-only PDF with no searchable or editable text layer.</p>
 
+        <div className={`native-drop-zone ${busy ? "drop-busy" : dropActive ? "drop-active" : "drop-idle"}`} aria-busy={busy}>
+        <span className="drop-instruction" role="status" aria-live="polite">{dropPrompt("pdf", busy)}</span>
         <div className="pdf-picker-card">
           <div className="pdf-picker-visual" aria-hidden="true">
             <div className="document-sheet document-sheet-back" />
@@ -413,6 +569,7 @@ export function PdfWorkflow({
             {!isDesktop() && <div className="desktop-only-note">PDF rendering and flattening use the Windows desktop engine. The browser preview keeps this control disabled.</div>}
           </div>
         </div>
+        </div>
 
         <div className="trust-row">
           <span><LockKeyhole size={15} /> No upload</span>
@@ -425,6 +582,11 @@ export function PdfWorkflow({
   }
 
   if (stage === "review" && session && currentPage) {
+    const pageWidth = preview?.pageIndex === selectedPage ? preview.width : currentPage.widthPixels;
+    const pageHeight = preview?.pageIndex === selectedPage ? preview.height : currentPage.heightPixels;
+    const scaledWidth = typeof zoom === "number" ? pageWidth * zoom / 100
+      : zoom === "fitPage" ? Math.min(canvasSize.width, canvasSize.height * pageWidth / pageHeight)
+      : canvasSize.width;
     const displayedPreview = preview?.pageIndex === selectedPage
       ? preview.previewDataUrl
       : currentPage.thumbnailDataUrl;
@@ -433,7 +595,7 @@ export function PdfWorkflow({
     );
     return (
       <section className={`stage-view review-stage pdf-review-stage ${busy ? "is-busy" : ""}`} aria-busy={busy}>
-        <button className="back-button" type="button" disabled={busy} onClick={() => onStageChange("add")}><ArrowLeft size={16} /> Choose a different PDF</button>
+        <button className="back-button" type="button" disabled={busy} onClick={() => void startAgain()}><ArrowLeft size={16} /> Choose a different PDF</button>
         <div className="review-heading">
           <div>
             <div className="eyebrow"><FileStack size={15} /> PDF page review</div>
@@ -467,7 +629,7 @@ export function PdfWorkflow({
                     type="button"
                     disabled={busy}
                     key={page.pageIndex}
-                    onClick={() => { setSelectedPage(page.pageIndex); setDraft(null); }}
+                    onClick={() => { setSelectedPage(page.pageIndex); setDraft(null); setResizeDraft(null); }}
                     aria-label={`Open page ${page.pageIndex + 1}`}
                   >
                     <span className="pdf-thumb-paper"><img src={page.thumbnailDataUrl} alt="" /></span>
@@ -492,9 +654,17 @@ export function PdfWorkflow({
                 <MousePointer2 size={15} /> {drawMode ? "Drawing covers" : "Add manual cover"}
               </button>
             </div>
-            <div className={`pdf-canvas ${drawMode && !busy ? "drawing" : ""}`}>
+            <div className="pdf-zoom-toolbar" role="group" aria-label="PDF zoom controls">
+              <button type="button" aria-label="Fit width" aria-pressed={zoom === "fitWidth"} disabled={busy} onClick={() => setZoom("fitWidth")}>Fit width</button>
+              <button type="button" aria-label="Fit page" aria-pressed={zoom === "fitPage"} disabled={busy} onClick={() => setZoom("fitPage")}>Fit page</button>
+              <span className="pdf-zoom-spacer" />
+              <button type="button" aria-label="Zoom out" disabled={busy || zoom === 50} onClick={() => setZoom((value) => stepPdfZoom(value, -1))}><Minus size={14} /></button>
+              <output aria-label="Current PDF zoom" aria-live="polite">{typeof zoom === "number" ? `${zoom}%` : zoom === "fitWidth" ? "Fit width" : "Fit page"}</output>
+              <button type="button" aria-label="Zoom in" disabled={busy || zoom === 200} onClick={() => setZoom((value) => stepPdfZoom(value, 1))}><Plus size={14} /></button>
+            </div>
+            <div ref={canvasRef} className={`pdf-canvas ${drawMode && !busy ? "drawing" : ""}`} tabIndex={0} role="region" aria-label="PDF page preview">
               {previewBusy && <div className="pdf-preview-loading"><LoaderCircle className="spin" size={21} /> Rendering page locally…</div>}
-              <div className="pdf-page-wrap">
+              <div className={`pdf-page-wrap ${zoom === "fitWidth" ? "zoom-fit-width" : zoom === "fitPage" ? "zoom-fit-page" : "zoom-percent"}`} style={{ width: scaledWidth > 0 ? scaledWidth : undefined, aspectRatio: `${pageWidth} / ${pageHeight}` }}>
                 <img src={displayedPreview} alt={`PDF page ${selectedPage + 1}`} draggable={false} />
                 <div
                   className="pdf-draw-layer"
@@ -507,12 +677,7 @@ export function PdfWorkflow({
                     <span
                       className={`redaction-region ${finding.kind}-region ${decisions[finding.id]?.enabled === false ? "excluded" : "selected"}`}
                       key={`${finding.id}-${rectangleIndex}`}
-                      style={{
-                        left: `${(rect.x / currentPage.widthPixels) * 100}%`,
-                        top: `${(rect.y / currentPage.heightPixels) * 100}%`,
-                        width: `${(rect.width / currentPage.widthPixels) * 100}%`,
-                        height: `${(rect.height / currentPage.heightPixels) * 100}%`,
-                      }}
+                      style={imageRectPercentStyle(rect, currentPage.widthPixels, currentPage.heightPixels)}
                     ><b>{findingIndex + 1}</b></span>
                   )))}
                   {currentManual.map((region, index) => (
@@ -680,6 +845,8 @@ export function PdfWorkflow({
           {withExceptions && <div className="exception-result"><AlertTriangle size={15} /> {result.exceptions} explicit Keep exception{result.exceptions === 1 ? "" : "s"}; those regions are not claimed safe.</div>}
           <div className="saved-path"><Check size={14} /> Saved to {result.savedPath}</div>
         </div>
+
+        <VerificationReceipt data={pdfVerificationReceipt(runtimeInfo, result)} />
 
         <div className="result-footer">
           <button className="text-button" type="button" onClick={() => void startAgain()}><RefreshCcw size={15} /> Process another PDF</button>

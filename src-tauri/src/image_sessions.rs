@@ -1,7 +1,7 @@
 use std::{
     io::Read,
     path::{Path, PathBuf},
-    sync::Mutex,
+    sync::{Mutex, MutexGuard},
 };
 
 use serde::Serialize;
@@ -51,9 +51,21 @@ pub struct ResolvedImageSession {
 }
 
 #[derive(Default)]
-pub struct ImageSessionStore(Mutex<Option<StoredImageSession>>);
+pub struct ImageSessionStore {
+    active: Mutex<Option<StoredImageSession>>,
+    replacement: Mutex<()>,
+}
 
 impl ImageSessionStore {
+    pub fn begin_replacement(&self) -> Result<MutexGuard<'_, ()>, String> {
+        let guard = self
+            .replacement
+            .lock()
+            .map_err(|_| "The image replacement could not be started.".to_owned())?;
+        self.clear_unlocked()?;
+        Ok(guard)
+    }
+
     pub fn replace_file(&self, path: &Path) -> Result<ImageSessionSummary, String> {
         let canonical_path = path.canonicalize().map_err(|_| {
             "The selected image could not be resolved. Choose the file again.".to_owned()
@@ -92,8 +104,16 @@ impl ImageSessionStore {
     }
 
     pub fn resolve(&self, id: &str) -> Result<ResolvedImageSession, String> {
+        let _guard = self
+            .replacement
+            .lock()
+            .map_err(|_| "The active image session could not be opened.".to_owned())?;
+        self.resolve_unlocked(id)
+    }
+
+    pub fn resolve_unlocked(&self, id: &str) -> Result<ResolvedImageSession, String> {
         let stored = self
-            .0
+            .active
             .lock()
             .map_err(|_| "The active image session could not be opened.".to_owned())?
             .as_ref()
@@ -127,7 +147,7 @@ impl ImageSessionStore {
 
     pub fn set_reviewed(&self, id: &str, reviewed: ReviewedVisualSnapshot) -> Result<(), String> {
         let mut active = self
-            .0
+            .active
             .lock()
             .map_err(|_| "The active image session could not be updated.".to_owned())?;
         let session = active
@@ -141,8 +161,16 @@ impl ImageSessionStore {
     }
 
     pub fn clear(&self) -> Result<(), String> {
+        let _guard = self
+            .replacement
+            .lock()
+            .map_err(|_| "The active image session could not be cleared.".to_owned())?;
+        self.clear_unlocked()
+    }
+
+    pub fn clear_unlocked(&self) -> Result<(), String> {
         *self
-            .0
+            .active
             .lock()
             .map_err(|_| "The active image session could not be cleared.".to_owned())? = None;
         Ok(())
@@ -170,7 +198,7 @@ impl ImageSessionStore {
             source_kind: stored.source_kind,
         };
         *self
-            .0
+            .active
             .lock()
             .map_err(|_| "The new image session could not be stored.".to_owned())? = Some(stored);
         Ok(summary)
@@ -196,6 +224,35 @@ fn read_source_file(path: &Path) -> Result<Vec<u8>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{sync::Arc, time::Duration};
+
+    #[test]
+    fn replacement_guard_keeps_failed_cleanup_before_a_new_commit() {
+        let store = Arc::new(ImageSessionStore::default());
+        let old_guard = store.begin_replacement().unwrap();
+        let (attempted_tx, attempted_rx) = std::sync::mpsc::channel();
+        let (committed_tx, committed_rx) = std::sync::mpsc::channel();
+        let next_store = Arc::clone(&store);
+        let next = std::thread::spawn(move || {
+            attempted_tx.send(()).unwrap();
+            let _guard = next_store.begin_replacement().unwrap();
+            let session = next_store.replace_clipboard(vec![4, 5, 6]).unwrap();
+            committed_tx.send(session.id).unwrap();
+        });
+        attempted_rx.recv().unwrap();
+        assert!(
+            committed_rx
+                .recv_timeout(Duration::from_millis(30))
+                .is_err()
+        );
+        let incomplete = store.replace_clipboard(vec![1, 2, 3]).unwrap();
+        store.clear_unlocked().unwrap();
+        drop(old_guard);
+        let new_id = committed_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        next.join().unwrap();
+        assert!(store.resolve(&incomplete.id).is_err());
+        assert!(store.resolve(&new_id).is_ok());
+    }
 
     #[test]
     fn replacing_a_clipboard_session_expires_the_previous_bytes() {

@@ -8,6 +8,8 @@ import type {
   PdfManualRegion,
   PdfPagePreview,
   PdfSession,
+  RuntimeInfo,
+  SavedTextFile,
   SanitizeRequest,
   SanitizeResult,
   ScanOptions,
@@ -22,6 +24,28 @@ declare global {
 
 export const isDesktop = () => Boolean(window.__TAURI_INTERNALS__);
 
+export async function getRuntimeInfo(): Promise<RuntimeInfo> {
+  return isDesktop()
+    ? invoke<RuntimeInfo>("get_runtime_info")
+    : Promise.resolve({
+        appVersion: "0.2.0-beta.1",
+        channel: "browser-preview",
+        commit: "unverified",
+        verifiedBuild: false,
+        target: "browser",
+        osVersion: "browser",
+        license: "MIT",
+        detectors: {
+          text: "available",
+          metadata: "unavailable",
+          face: "unavailable",
+          qr: "unavailable",
+          barcode: "unavailable",
+          pdf: "unavailable",
+        },
+      });
+}
+
 export async function scanText(text: string, options: ScanOptions): Promise<ScanReport> {
   return isDesktop()
     ? invoke<ScanReport>("scan_text", { text, options })
@@ -34,15 +58,16 @@ export async function sanitizeText(request: SanitizeRequest): Promise<SanitizeRe
     : sanitizeInBrowser(request);
 }
 
-export async function saveCleanedText(defaultName: string, content: string): Promise<string | null> {
-  if (isDesktop()) return invoke<string | null>("save_cleaned_text", { defaultName, content });
+export async function saveCleanedText(defaultName: string, content: string): Promise<SavedTextFile | null> {
+  if (isDesktop()) return invoke<SavedTextFile | null>("save_cleaned_text", { defaultName, content });
   const url = URL.createObjectURL(new Blob([content], { type: "text/plain;charset=utf-8" }));
   const anchor = document.createElement("a");
   anchor.href = url;
   anchor.download = defaultName;
   anchor.click();
   URL.revokeObjectURL(url);
-  return defaultName;
+  // Browser downloads do not expose a final destination for reread/verification.
+  return null;
 }
 
 export async function pickImage(): Promise<ImageSession | null> {
@@ -50,6 +75,13 @@ export async function pickImage(): Promise<ImageSession | null> {
     throw new Error("Image metadata cleaning is available in the VeilSend desktop app.");
   }
   return invoke<ImageSession | null>("pick_image");
+}
+
+export async function openDroppedImage(path: string): Promise<ImageSession> {
+  if (!isDesktop()) {
+    throw new Error("Image metadata cleaning is available in the VeilSend desktop app.");
+  }
+  return invoke<ImageSession>("open_image_path", { path });
 }
 
 export async function pasteImage(): Promise<ImageSession> {
@@ -82,6 +114,13 @@ export async function pickPdf(): Promise<PdfSession | null> {
     throw new Error("PDF safety copies are available in the VeilSend desktop app.");
   }
   return invoke<PdfSession | null>("pick_pdf");
+}
+
+export async function openDroppedPdf(path: string): Promise<PdfSession> {
+  if (!isDesktop()) {
+    throw new Error("PDF safety copies are available in the VeilSend desktop app.");
+  }
+  return invoke<PdfSession>("open_pdf_path", { path });
 }
 
 export async function getPdfPagePreview(

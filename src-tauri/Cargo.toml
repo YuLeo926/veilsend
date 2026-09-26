@@ -1,6 +1,6 @@
 [package]
 name = "veilsend"
-version = "0.1.0"
+version = "0.2.0-beta.1"
 description = "Scan sensitive information before it leaves your computer"
 authors = ["VeilSend contributors"]
 edition = "2024"
@@ -24,6 +24,7 @@ sha2 = "0.10"
 tauri = { version = "2", features = [] }
 tempfile = "3"
 uuid = { version = "1", features = ["v4"] }
+tauri-plugin-opener = "=2.5.4"
 
 [dev-dependencies]
 serde_json = "1"
@@ -39,7 +40,9 @@ windows = { version = "0.62.2", features = [
     "Media_Ocr",
     "Storage",
     "Storage_Streams",
+    "System_Profile",
     "Win32_System_WinRT",
     "Win32_UI_HiDpi",
+    "Win32_Storage_FileSystem",
 ] }
 windows-future = "=0.3.2"

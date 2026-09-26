@@ -1,10 +1,11 @@
 use std::{
-    io::{Cursor, Read},
-    path::Path,
+    io::{Cursor, Read, Seek, SeekFrom, Write},
+    path::{Path, PathBuf},
 };
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde::Serialize;
+use tauri::Manager;
 use veilsend_core::{
     DEFAULT_MAX_IMAGE_BYTES, ImageBarcodeInspection, ImageFaceInspection, ImageFormat,
     ImageInspection, ImageOcrInspection, ImageQrInspection, ImageRedactionDecision,
@@ -16,6 +17,7 @@ mod image_pipeline;
 mod image_sessions;
 mod pdf_pipeline;
 mod pdf_sessions;
+mod release_info;
 mod windows_clipboard;
 mod windows_faces;
 mod windows_ocr;
@@ -65,6 +67,7 @@ struct CleanedImageVerification {
 struct CleanedImageFile {
     saved_path: String,
     filename: String,
+    saved_fingerprint: String,
     preview_data_url: String,
     original_bytes: usize,
     cleaned_size: usize,
@@ -80,6 +83,147 @@ struct CleanedImageFile {
 }
 
 const MAX_SAVED_IMAGE_BYTES: usize = 100 * 1024 * 1024;
+const MAX_SAVED_TEXT_BYTES: usize = 10 * 1024 * 1024;
+const MAX_DECODED_IMAGE_PIXELS: u64 = 40_000_000;
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SavedTextFile {
+    saved_path: String,
+    filename: String,
+    cleaned_size: usize,
+    saved_fingerprint: String,
+}
+
+fn write_new_text_copy(path: &Path, content: &str) -> Result<SavedTextFile, String> {
+    write_new_text_copy_with_reread_limit(path, content, MAX_SAVED_TEXT_BYTES)
+}
+
+fn write_new_text_copy_with_reread_limit(
+    path: &Path,
+    content: &str,
+    reread_limit: usize,
+) -> Result<SavedTextFile, String> {
+    write_new_text_copy_with_reread_limit_and_hook(path, content, reread_limit, || Ok(()))
+}
+
+fn write_new_text_copy_with_reread_limit_and_hook(
+    path: &Path,
+    content: &str,
+    reread_limit: usize,
+    after_sync: impl FnOnce() -> Result<(), String>,
+) -> Result<SavedTextFile, String> {
+    if content.len() > MAX_SAVED_TEXT_BYTES {
+        return Err("The clean copy exceeds VeilSend's 10 MB local safety limit.".to_owned());
+    }
+    let mut file = open_new_text_copy(path)
+        .map_err(|error| format!("Could not create a new clean copy: {error}"))?;
+    let result = (|| {
+        file.write_all(content.as_bytes())
+            .and_then(|_| file.sync_all())
+            .map_err(|error| format!("Could not finish the clean copy: {error}"))?;
+        after_sync()?;
+
+        file.seek(SeekFrom::Start(0))
+            .map_err(|error| format!("Could not reread the clean copy: {error}"))?;
+        let mut saved_bytes = Vec::new();
+        Read::take(&mut file, reread_limit as u64 + 1)
+            .read_to_end(&mut saved_bytes)
+            .map_err(|error| format!("Could not reread the clean copy: {error}"))?;
+        if saved_bytes.len() > reread_limit {
+            return Err("The saved clean copy exceeds VeilSend's local safety limit.".to_owned());
+        }
+        if saved_bytes != content.as_bytes() {
+            return Err("The saved text bytes do not match the verified local output.".to_owned());
+        }
+        if !path_names_open_file(&file, path)? {
+            return Err(
+                "The saved clean copy changed at its destination before verification.".to_owned(),
+            );
+        }
+        let filename = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| "The saved clean copy has no valid filename.".to_owned())?
+            .to_owned();
+        Ok(SavedTextFile {
+            saved_path: path.to_string_lossy().into_owned(),
+            filename,
+            cleaned_size: saved_bytes.len(),
+            saved_fingerprint: fingerprint(&saved_bytes),
+        })
+    })();
+
+    match result {
+        Ok(saved) => Ok(saved),
+        Err(error) => {
+            let removed = cleanup_owned_text_copy(&file, path);
+            drop(file);
+            if !removed {
+                Err(format!(
+                    "{error} The incomplete clean copy could not be removed."
+                ))
+            } else {
+                Err(error)
+            }
+        }
+    }
+}
+
+fn open_new_text_copy(path: &Path) -> std::io::Result<std::fs::File> {
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true).write(true).create_new(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        use windows::Win32::{
+            Foundation::{GENERIC_READ, GENERIC_WRITE},
+            Storage::FileSystem::DELETE,
+        };
+        // Handle-based failure cleanup requires DELETE access from creation.
+        options.access_mode(GENERIC_READ.0 | GENERIC_WRITE.0 | DELETE.0);
+    }
+    options.open(path)
+}
+
+fn path_names_open_file(file: &std::fs::File, path: &Path) -> Result<bool, String> {
+    let owned = same_file::Handle::from_file(
+        file.try_clone()
+            .map_err(|_| "Could not verify the saved clean copy's file identity.".to_owned())?,
+    )
+    .map_err(|_| "Could not verify the saved clean copy's file identity.".to_owned())?;
+    let named = same_file::Handle::from_path(path)
+        .map_err(|_| "Could not verify the saved clean copy's final destination.".to_owned())?;
+    Ok(owned == named)
+}
+
+#[cfg(windows)]
+fn cleanup_owned_text_copy(file: &std::fs::File, _path: &Path) -> bool {
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::{
+        Foundation::HANDLE,
+        Storage::FileSystem::{
+            FILE_DISPOSITION_INFO, FileDispositionInfo, SetFileInformationByHandle,
+        },
+    };
+
+    let disposition = FILE_DISPOSITION_INFO { DeleteFile: true };
+    // This marks the opened file object, even if its pathname was replaced.
+    unsafe {
+        SetFileInformationByHandle(
+            HANDLE(file.as_raw_handle()),
+            FileDispositionInfo,
+            &disposition as *const _ as *const std::ffi::c_void,
+            std::mem::size_of_val(&disposition) as u32,
+        )
+        .is_ok()
+    }
+}
+
+#[cfg(not(windows))]
+fn cleanup_owned_text_copy(file: &std::fs::File, path: &Path) -> bool {
+    path_names_open_file(file, path).unwrap_or(false) && std::fs::remove_file(path).is_ok()
+}
 
 fn run_on_dedicated_pdf_thread<T, F>(operation: &str, task: F) -> Result<T, String>
 where
@@ -96,6 +240,50 @@ where
         .map_err(|_| format!("{operation} stopped unexpectedly."))?
 }
 
+fn validate_local_file(path: &Path, extensions: &[&str]) -> Result<(), String> {
+    if !path.is_file() {
+        return Err("Choose one supported local file, not a folder.".to_owned());
+    }
+    let supported = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .is_some_and(|value| {
+            extensions
+                .iter()
+                .any(|expected| value.eq_ignore_ascii_case(expected))
+        });
+    if !supported {
+        return Err("That file type is not supported in this workspace.".to_owned());
+    }
+    Ok(())
+}
+
+fn load_image_path(path: PathBuf, store: &ImageSessionStore) -> Result<ImageSession, String> {
+    // The guard serializes the entire replacement, including failure cleanup.
+    let _replacement = store.begin_replacement()?;
+    let loaded = (|| {
+        validate_local_file(&path, &["jpg", "jpeg", "png"])?;
+        let summary = store.replace_file(&path)?;
+        let resolved = store.resolve_unlocked(&summary.id)?;
+        let (session, reviewed) = build_image_session(summary, &resolved.bytes)?;
+        store.set_reviewed(&session.session_id, reviewed)?;
+        Ok(session)
+    })();
+    if loaded.is_err() {
+        store.clear_unlocked()?;
+    }
+    loaded
+}
+
+fn load_pdf_path(path: PathBuf, store: &PdfSessionStore) -> Result<PdfSessionSummary, String> {
+    let _replacement = store.begin_replacement()?;
+    validate_local_file(&path, &["pdf"])?;
+    let prepared = run_on_dedicated_pdf_thread("The PDF inspection", move || {
+        pdf_sessions::prepare_pdf_file(&path)
+    })?;
+    store.replace(prepared)
+}
+
 #[tauri::command]
 fn scan_text(text: String, options: ScanOptions) -> Result<ScanReport, VeilSendError> {
     scan(&text, options)
@@ -107,10 +295,15 @@ fn sanitize_text(request: SanitizeRequest) -> Result<SanitizeResult, VeilSendErr
 }
 
 #[tauri::command]
+fn get_runtime_info() -> release_info::RuntimeInfo {
+    release_info::runtime_info()
+}
+
+#[tauri::command]
 async fn save_cleaned_text(
     default_name: String,
     content: String,
-) -> Result<Option<String>, String> {
+) -> Result<Option<SavedTextFile>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let path = rfd::FileDialog::new()
             .set_file_name(&default_name)
@@ -118,9 +311,7 @@ async fn save_cleaned_text(
         let Some(path) = path else {
             return Ok(None);
         };
-        std::fs::write(&path, content)
-            .map_err(|error| format!("Could not save the clean copy: {error}"))?;
-        Ok(Some(path.to_string_lossy().into_owned()))
+        write_new_text_copy(&path, &content).map(Some)
     })
     .await
     .map_err(|error| format!("The save dialog could not be opened: {error}"))?
@@ -141,11 +332,15 @@ async fn pick_image(
     let Some(path) = path else {
         return Ok(None);
     };
-    let summary = state.replace_file(&path)?;
-    let resolved = state.resolve(&summary.id)?;
-    let (session, reviewed) = build_image_session(summary, &resolved.bytes)?;
-    state.set_reviewed(&session.session_id, reviewed)?;
-    Ok(Some(session))
+    load_image_path(path, &state).map(Some)
+}
+
+#[tauri::command]
+async fn open_image_path(
+    path: String,
+    state: tauri::State<'_, ImageSessionStore>,
+) -> Result<ImageSession, String> {
+    load_image_path(PathBuf::from(path), &state)
 }
 
 #[tauri::command]
@@ -167,31 +362,40 @@ async fn paste_image(
     })
     .await
     .map_err(|error| format!("The clipboard check could not finish: {error}"))??;
-    let summary = state.replace_clipboard(bytes)?;
-    let resolved = state.resolve(&summary.id)?;
-    let (session, reviewed) = build_image_session(summary, &resolved.bytes)?;
-    state.set_reviewed(&session.session_id, reviewed)?;
-    Ok(session)
+    let _replacement = state.begin_replacement()?;
+    let loaded = (|| {
+        let summary = state.replace_clipboard(bytes)?;
+        let resolved = state.resolve_unlocked(&summary.id)?;
+        let (session, reviewed) = build_image_session(summary, &resolved.bytes)?;
+        state.set_reviewed(&session.session_id, reviewed)?;
+        Ok(session)
+    })();
+    if loaded.is_err() {
+        state.clear_unlocked()?;
+    }
+    loaded
 }
 
 #[tauri::command]
-async fn pick_pdf(
-    state: tauri::State<'_, PdfSessionStore>,
-) -> Result<Option<PdfSessionSummary>, String> {
-    let prepared = tauri::async_runtime::spawn_blocking(move || {
+async fn pick_pdf(app: tauri::AppHandle) -> Result<Option<PdfSessionSummary>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
         let path = rfd::FileDialog::new()
             .add_filter("PDF documents", &["pdf"])
             .pick_file();
-        path.map(|path| {
-            run_on_dedicated_pdf_thread("The PDF inspection", move || {
-                pdf_sessions::prepare_pdf_file(&path)
-            })
-        })
-        .transpose()
+        path.map(|path| load_pdf_path(path, &app.state::<PdfSessionStore>()))
+            .transpose()
     })
     .await
-    .map_err(|error| format!("The PDF picker could not be opened: {error}"))??;
-    prepared.map(|prepared| state.replace(prepared)).transpose()
+    .map_err(|error| format!("The PDF picker could not finish: {error}"))?
+}
+
+#[tauri::command]
+async fn open_pdf_path(path: String, app: tauri::AppHandle) -> Result<PdfSessionSummary, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        load_pdf_path(PathBuf::from(path), &app.state::<PdfSessionStore>())
+    })
+    .await
+    .map_err(|_| "The PDF inspection could not finish.".to_owned())?
 }
 
 #[tauri::command]
@@ -446,6 +650,7 @@ async fn clean_image_file(
         Ok(Some(CleanedImageFile {
             saved_path: output.to_string_lossy().into_owned(),
             filename,
+            saved_fingerprint: fingerprint(&saved_bytes),
             preview_data_url: data_url(extension, &saved_bytes),
             original_bytes,
             cleaned_size: saved_bytes.len(),
@@ -485,6 +690,7 @@ fn build_image_session(
         return Err("The source image changed while its review session was opening.".to_owned());
     }
     let inspection = inspect_image(bytes, DEFAULT_MAX_IMAGE_BYTES).map_err(format_core_error)?;
+    validate_image_pixels(&inspection)?;
     let visual = inspect_visual(bytes);
     let reviewed = visual.snapshot();
     Ok((
@@ -501,6 +707,19 @@ fn build_image_session(
         },
         reviewed,
     ))
+}
+
+fn validate_image_pixels(inspection: &ImageInspection) -> Result<(), String> {
+    let (Some(width), Some(height)) = (inspection.width, inspection.height) else {
+        return Err("The image dimensions could not be read safely.".to_owned());
+    };
+    if width == 0 || height == 0 || u64::from(width) * u64::from(height) > MAX_DECODED_IMAGE_PIXELS
+    {
+        return Err(format!(
+            "The image expands beyond VeilSend's {MAX_DECODED_IMAGE_PIXELS}-pixel local safety limit."
+        ));
+    }
+    Ok(())
 }
 
 fn read_image_with_limit(path: &Path, max_bytes: usize) -> Result<Vec<u8>, String> {
@@ -586,17 +805,21 @@ fn format_core_error(error: VeilSendError) -> String {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
         .manage(ImageSessionStore::default())
         .manage(PdfSessionStore::default())
         .invoke_handler(tauri::generate_handler![
             scan_text,
             sanitize_text,
+            get_runtime_info,
             save_cleaned_text,
             pick_image,
+            open_image_path,
             paste_image,
             clear_image_session,
             clean_image_file,
             pick_pdf,
+            open_pdf_path,
             get_pdf_page_preview,
             clear_pdf_session,
             clean_pdf_file
@@ -607,7 +830,294 @@ pub fn run() {
 
 #[cfg(test)]
 mod path_tests {
-    use super::{run_on_dedicated_pdf_thread, same_path};
+    use super::{
+        load_image_path, load_pdf_path, run_on_dedicated_pdf_thread, same_path,
+        validate_image_pixels, validate_local_file, write_new_text_copy,
+        write_new_text_copy_with_reread_limit, write_new_text_copy_with_reread_limit_and_hook,
+    };
+    use crate::{
+        image_sessions::ImageSessionStore,
+        pdf_sessions::{PdfSessionStore, PreparedPdfSession},
+    };
+    use veilsend_core::fingerprint;
+
+    #[test]
+    fn compressed_image_with_oversized_dimensions_is_rejected_before_decode() {
+        let mut encoded = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::new_rgb8(1, 1)
+            .write_to(&mut encoded, image::ImageFormat::Png)
+            .unwrap();
+        let mut bytes = encoded.into_inner();
+        bytes[16..20].copy_from_slice(&10_000_u32.to_be_bytes());
+        bytes[20..24].copy_from_slice(&5_000_u32.to_be_bytes());
+        let crc = bytes[12..29].iter().fold(0xffff_ffff_u32, |mut crc, byte| {
+            crc ^= u32::from(*byte);
+            for _ in 0..8 {
+                crc = (crc >> 1) ^ if crc & 1 == 1 { 0xedb8_8320 } else { 0 };
+            }
+            crc
+        }) ^ 0xffff_ffff;
+        bytes[29..33].copy_from_slice(&crc.to_be_bytes());
+        let inspection =
+            veilsend_core::inspect_image(&bytes, veilsend_core::DEFAULT_MAX_IMAGE_BYTES).unwrap();
+        assert_eq!(
+            (inspection.width, inspection.height),
+            (Some(10_000), Some(5_000))
+        );
+        assert!(validate_image_pixels(&inspection).is_err());
+
+        let store = ImageSessionStore::default();
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("compressed.png");
+        std::fs::write(&path, &bytes).unwrap();
+        let error = load_image_path(path, &store).unwrap_err();
+        assert!(error.contains("40000000"));
+    }
+
+    #[test]
+    fn successful_image_path_commits_a_reviewed_session() {
+        let mut encoded = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::new_rgb8(1, 1)
+            .write_to(&mut encoded, image::ImageFormat::Png)
+            .unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("small.png");
+        std::fs::write(&path, encoded.into_inner()).unwrap();
+        let store = ImageSessionStore::default();
+        let session = load_image_path(path, &store).unwrap();
+        assert!(
+            store
+                .resolve(&session.session_id)
+                .unwrap()
+                .reviewed
+                .is_some()
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn successful_pdf_path_commits_a_prepared_session() {
+        let source = veilsend_core::build_flattened_pdf(
+            &[veilsend_core::PdfPageRaster {
+                width_pixels: 20,
+                height_pixels: 30,
+                width_points: 72.0,
+                height_points: 108.0,
+                rgb_bytes: vec![240; 20 * 30 * 3],
+            }],
+            veilsend_core::PdfBuildLimits::default(),
+        )
+        .unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("small.pdf");
+        std::fs::write(&path, source).unwrap();
+        let store = PdfSessionStore::default();
+        let session = load_pdf_path(path, &store).unwrap();
+        assert_eq!(session.page_count, 1);
+        assert!(store.resolve(&session.session_id).is_ok());
+    }
+
+    #[test]
+    fn dropped_path_must_be_a_regular_file_with_the_expected_extension() {
+        let directory = tempfile::tempdir().unwrap();
+        assert!(validate_local_file(directory.path(), &["jpg", "jpeg", "png"]).is_err());
+        let wrong = directory.path().join("image.txt");
+        std::fs::write(&wrong, b"not an image").unwrap();
+        assert!(validate_local_file(&wrong, &["jpg", "jpeg", "png"]).is_err());
+    }
+
+    #[test]
+    fn failed_image_preparation_does_not_leave_an_active_session() {
+        let store = ImageSessionStore::default();
+        let prior = store.replace_clipboard(vec![1, 2, 3]).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("private-broken.png");
+        std::fs::write(&path, b"not png bytes").unwrap();
+        let error = load_image_path(path.clone(), &store).unwrap_err();
+        assert!(store.resolve(&prior.id).is_err());
+        assert!(!error.contains("private-broken.png"));
+        assert!(!error.contains(&path.to_string_lossy().to_string()));
+    }
+
+    #[test]
+    fn rejected_replacement_type_expires_the_previous_image_session() {
+        let store = ImageSessionStore::default();
+        let prior = store.replace_clipboard(vec![1, 2, 3]).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("private-not-an-image.txt");
+        std::fs::write(&path, b"not an image").unwrap();
+        let error = load_image_path(path.clone(), &store).unwrap_err();
+        assert!(store.resolve(&prior.id).is_err());
+        assert!(!error.contains("private-not-an-image.txt"));
+        assert!(!error.contains(&path.to_string_lossy().to_string()));
+    }
+
+    #[test]
+    fn failed_pdf_preparation_does_not_leave_an_active_session() {
+        let store = PdfSessionStore::default();
+        let directory = tempfile::tempdir().unwrap();
+        let prior_path = directory.path().join("prior.pdf");
+        let prior_bytes = b"%PDF-prior".to_vec();
+        std::fs::write(&prior_path, &prior_bytes).unwrap();
+        let prior = store
+            .replace(PreparedPdfSession {
+                canonical_path: prior_path.canonicalize().unwrap(),
+                source_bytes: prior_bytes.clone(),
+                fingerprint: fingerprint(&prior_bytes),
+                filename: "prior.pdf".to_owned(),
+                pages: Vec::new(),
+            })
+            .unwrap();
+        let path = directory.path().join("private-broken.pdf");
+        std::fs::write(&path, b"not pdf bytes").unwrap();
+        let error = load_pdf_path(path.clone(), &store).unwrap_err();
+        assert!(store.resolve(&prior.session_id).is_err());
+        assert!(!error.contains("private-broken.pdf"));
+        assert!(!error.contains(&path.to_string_lossy().to_string()));
+    }
+
+    #[test]
+    fn saved_text_identity_comes_from_reread_destination() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("cleaned.txt");
+        let saved = write_new_text_copy(&path, "reserved example").unwrap();
+        assert_eq!(saved.saved_path, path.to_string_lossy());
+        assert_eq!(saved.filename, "cleaned.txt");
+        assert_eq!(saved.cleaned_size, 16);
+        assert_eq!(saved.saved_fingerprint, fingerprint(b"reserved example"));
+        assert_eq!(saved.saved_fingerprint.len(), 64);
+        assert!(
+            saved
+                .saved_fingerprint
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit())
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), b"reserved example");
+        let wire = serde_json::to_value(&saved).unwrap();
+        assert_eq!(wire["savedPath"], path.to_string_lossy().as_ref());
+        assert_eq!(wire["filename"], "cleaned.txt");
+        assert_eq!(wire["cleanedSize"], 16);
+        assert_eq!(wire["savedFingerprint"], fingerprint(b"reserved example"));
+        assert!(wire.get("saved_fingerprint").is_none());
+    }
+
+    #[test]
+    fn saved_text_identity_refuses_to_replace_existing_destination() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("cleaned.txt");
+        std::fs::write(&path, b"leave me unchanged").unwrap();
+        assert!(write_new_text_copy(&path, "replacement").is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), b"leave me unchanged");
+    }
+
+    #[test]
+    fn saved_text_identity_removes_unverified_created_copy_and_allows_retry() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("cleaned.txt");
+
+        let error = write_new_text_copy_with_reread_limit(&path, "created bytes", 2).unwrap_err();
+        assert!(error.contains("saved clean copy exceeds"));
+        assert!(
+            !path.exists(),
+            "the newly created unverified copy must be removed"
+        );
+
+        let retry = write_new_text_copy(&path, "verified retry").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"verified retry");
+        assert_eq!(retry.saved_fingerprint, fingerprint(b"verified retry"));
+    }
+
+    #[test]
+    fn saved_text_identity_rejects_in_place_changes_after_sync() {
+        for changed_bytes in [
+            b"altered bytes".as_slice(), // Same length as the verified input.
+            b"short",
+            b"a longer unverified replacement",
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join("cleaned.txt");
+            let error =
+                write_new_text_copy_with_reread_limit_and_hook(&path, "created bytes", 64, || {
+                    let original_object = same_file::Handle::from_path(&path).unwrap();
+                    // The hook runs after sync_all and before the owned handle is reread.
+                    // Truncating this path mutates the same object; it does not replace it.
+                    std::fs::write(&path, changed_bytes).unwrap();
+                    assert_eq!(
+                        original_object,
+                        same_file::Handle::from_path(&path).unwrap()
+                    );
+                    assert_eq!(std::fs::read(&path).unwrap(), changed_bytes);
+                    Ok(())
+                })
+                .unwrap_err();
+
+            assert!(error.contains("do not match the verified local output"));
+            assert!(!path.exists(), "the changed owned copy must be removed");
+            let retry = write_new_text_copy(&path, "verified retry").unwrap();
+            assert_eq!(retry.saved_fingerprint, fingerprint(b"verified retry"));
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn changed_text_copy_cleanup_preserves_a_replacement_at_the_final_path() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("cleaned.txt");
+        let renamed = directory.path().join("renamed-owned.txt");
+        let error =
+            write_new_text_copy_with_reread_limit_and_hook(&path, "created bytes", 64, || {
+                std::fs::write(&path, b"altered bytes").unwrap();
+                std::fs::rename(&path, &renamed).unwrap();
+                std::fs::write(&path, b"sentinel replacement").unwrap();
+                Ok(())
+            })
+            .unwrap_err();
+
+        assert!(error.contains("do not match the verified local output"));
+        assert!(
+            !renamed.exists(),
+            "cleanup must remove only the owned object"
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), b"sentinel replacement");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn failed_text_copy_cleanup_removes_owned_renamed_file_not_replacement() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("cleaned.txt");
+        let renamed = directory.path().join("renamed-owned.txt");
+        let error =
+            write_new_text_copy_with_reread_limit_and_hook(&path, "created bytes", 2, || {
+                std::fs::rename(&path, &renamed).unwrap();
+                std::fs::write(&path, b"sentinel replacement").unwrap();
+                Ok(())
+            })
+            .unwrap_err();
+
+        assert!(error.contains("saved clean copy exceeds"));
+        assert!(!renamed.exists(), "only the owned file should be removed");
+        assert_eq!(std::fs::read(&path).unwrap(), b"sentinel replacement");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn text_copy_rejects_replaced_final_path_before_success() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("cleaned.txt");
+        let renamed = directory.path().join("renamed-owned.txt");
+        let error =
+            write_new_text_copy_with_reread_limit_and_hook(&path, "created bytes", 64, || {
+                std::fs::rename(&path, &renamed).unwrap();
+                std::fs::write(&path, b"sentinel replacement").unwrap();
+                Ok(())
+            })
+            .unwrap_err();
+
+        assert!(error.contains("changed at its destination"));
+        assert!(!renamed.exists());
+        assert_eq!(std::fs::read(&path).unwrap(), b"sentinel replacement");
+    }
 
     #[test]
     fn pdf_work_uses_a_fresh_operating_system_thread() {

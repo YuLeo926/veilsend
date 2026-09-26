@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   ArrowLeft,
@@ -21,17 +21,27 @@ import {
   Plus,
   RefreshCcw,
   ScanLine,
+  ShieldAlert,
   ShieldCheck,
   Sparkles,
   Upload,
   UserRound,
   X,
 } from "lucide-react";
-import { ImageWorkflow } from "./components/ImageWorkflow";
+import { ImageWorkflow, type ImageWorkflowHandle } from "./components/ImageWorkflow";
 import { InputModeTabs, type InputMode } from "./components/InputModeTabs";
-import { PdfWorkflow } from "./components/PdfWorkflow";
-import { isDesktop, sanitizeText, saveCleanedText, scanText } from "./lib/bridge";
+import { PdfWorkflow, type PdfWorkflowHandle } from "./components/PdfWorkflow";
+import { TrustCenter, type TrustRuntimeState } from "./components/TrustCenter";
+import { VerificationReceipt } from "./components/VerificationReceipt";
+import { getRuntimeInfo, isDesktop, sanitizeText, saveCleanedText, scanText } from "./lib/bridge";
+import {
+  deriveTextDiagnostics,
+  emptyWorkflowDiagnostics,
+  type DiagnosticErrorCode,
+  type WorkflowDiagnostics,
+} from "./lib/diagnostics";
 import { syntheticSample } from "./lib/sample";
+import { textVerificationReceipt } from "./lib/verificationReceipt";
 import type {
   Category,
   Finding,
@@ -39,10 +49,13 @@ import type {
   SanitizeResult,
   ScanOptions,
   ScanReport,
+  RuntimeInfo,
+  SavedTextFile,
   Severity,
 } from "./lib/types";
 
 type Stage = "add" | "review" | "result";
+type TextCleanResult = SanitizeResult & { findingsRedacted: number };
 
 const MAX_BYTES = 10 * 1024 * 1024;
 const acceptedExtensions = ["env", "json", "log", "txt"];
@@ -122,6 +135,7 @@ function FindingCard({
   decision,
   rawValue,
   revealed,
+  disabled,
   onReveal,
   onDecision,
 }: {
@@ -129,6 +143,7 @@ function FindingCard({
   decision: FindingDecision;
   rawValue: string;
   revealed: boolean;
+  disabled: boolean;
   onReveal: () => void;
   onDecision: (next: FindingDecision) => void;
 }) {
@@ -140,6 +155,7 @@ function FindingCard({
         <button
           className="finding-check"
           type="button"
+          disabled={disabled}
           onClick={() => onDecision({ ...decision, enabled: !decision.enabled })}
           aria-label={decision.enabled ? `Exclude ${finding.label}` : `Include ${finding.label}`}
           aria-pressed={decision.enabled}
@@ -171,7 +187,7 @@ function FindingCard({
           <span>Replace with</span>
           <input
             value={decision.replacement}
-            disabled={!decision.enabled}
+            disabled={disabled || !decision.enabled}
             onChange={(event) => onDecision({ ...decision, replacement: event.target.value })}
             spellCheck={false}
           />
@@ -191,13 +207,27 @@ function App() {
   const [report, setReport] = useState<ScanReport | null>(null);
   const [decisions, setDecisions] = useState<Record<string, FindingDecision>>({});
   const [revealed, setRevealed] = useState<Set<string>>(new Set());
-  const [result, setResult] = useState<SanitizeResult | null>(null);
+  const [result, setResult] = useState<TextCleanResult | null>(null);
   const [busy, setBusy] = useState(false);
+  const [imageBusy, setImageBusy] = useState(false);
+  const [pdfBusy, setPdfBusy] = useState(false);
   const [error, setError] = useState("");
   const [dropActive, setDropActive] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [savedPath, setSavedPath] = useState("");
+  const [savedFile, setSavedFile] = useState<SavedTextFile | null>(null);
+  const [runtimeInfo, setRuntimeInfo] = useState<RuntimeInfo | null>(null);
+  const [runtimeState, setRuntimeState] = useState<TrustRuntimeState>("loading");
+  const [trustOpen, setTrustOpen] = useState(false);
+  const [activeDiagnostics, setActiveDiagnostics] = useState<WorkflowDiagnostics>(() => emptyWorkflowDiagnostics("text"));
+  const [diagnosticError, setDiagnosticError] = useState<DiagnosticErrorCode>("none");
   const fileInput = useRef<HTMLInputElement>(null);
+  const trustTrigger = useRef<HTMLButtonElement>(null);
+  const textOperationGeneration = useRef(0);
+  // Protect operation inputs even before React renders disabled controls.
+  const textOperationPending = useRef(false);
+  const currentMode = useRef<InputMode>("text");
+  const imageWorkflow = useRef<ImageWorkflowHandle>(null);
+  const pdfWorkflow = useRef<PdfWorkflowHandle>(null);
 
   const options: ScanOptions = useMemo(() => ({
     maxBytes: MAX_BYTES,
@@ -217,36 +247,117 @@ function App() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }, [stage]);
 
+  useEffect(() => {
+    let active = true;
+    void getRuntimeInfo()
+      .then((info) => {
+        if (!active) return;
+        setRuntimeInfo(info);
+        setRuntimeState("loaded");
+      })
+      .catch(() => {
+        if (!active) return;
+        setRuntimeInfo(null);
+        setRuntimeState("failed");
+      });
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    if (mode !== "text") return;
+    setActiveDiagnostics(deriveTextDiagnostics(
+      stage,
+      text ? new TextEncoder().encode(text).byteLength : null,
+      report !== null,
+      result !== null,
+    ));
+  }, [mode, report, result, stage, text]);
+
+  const onWorkflowDiagnosticsChange = useCallback((next: WorkflowDiagnostics) => {
+    setActiveDiagnostics(next);
+  }, []);
+
+  const setWorkflowError = useCallback((message: string, code: DiagnosticErrorCode = "workflowFailed") => {
+    setError(message);
+    setDiagnosticError(message ? code : "none");
+  }, []);
+
+  const workflowDiagnostics = useMemo(() => ({
+    inputKind: activeDiagnostics.inputKind,
+    workflowState: activeDiagnostics.workflowState,
+    inputSizeBucket: activeDiagnostics.inputSizeBucket,
+    pageCount: activeDiagnostics.pageCount,
+    lastErrorCode: diagnosticError,
+    detectors: activeDiagnostics.detectors,
+  }), [activeDiagnostics, diagnosticError]);
+
+  function setTextBusy(next: boolean) {
+    textOperationPending.current = next;
+    setBusy(next);
+  }
+
+  function invalidateTextOperations(nextMode: InputMode) {
+    textOperationGeneration.current += 1;
+    currentMode.current = nextMode;
+    setTextBusy(false);
+    setSavedFile(null);
+  }
+
+  function isCurrentTextOperation(token: number): boolean {
+    return currentMode.current === "text" && textOperationGeneration.current === token;
+  }
+
+  const buildIdentity = runtimeState === "loading"
+    ? "Loading build identity"
+    : runtimeInfo?.verifiedBuild
+      ? "Trusted release beta"
+      : "Unverified build";
+  const buildDetail = runtimeInfo ? `${runtimeInfo.channel} · ${runtimeInfo.commit}` : "Local runtime record";
+  const BuildIdentityIcon = runtimeState === "loading"
+    ? LoaderCircle
+    : runtimeInfo?.verifiedBuild
+      ? ShieldCheck
+      : ShieldAlert;
+
   async function acceptFile(file: File) {
-    setError("");
+    if (textOperationPending.current || currentMode.current !== "text") return;
+    const token = ++textOperationGeneration.current;
+    setWorkflowError("");
     const extension = file.name.split(".").pop()?.toLowerCase() ?? "";
     if (!acceptedExtensions.includes(extension) && !file.name.startsWith(".env")) {
-      setError("Text mode accepts UTF-8 .txt, .log, .json, and .env files. Use Images for JPEG and PNG metadata.");
+      setWorkflowError("Text mode accepts UTF-8 .txt, .log, .json, and .env files. Use Images for JPEG and PNG metadata.", "inputRejected");
       return;
     }
     if (file.size > MAX_BYTES) {
-      setError("This file is larger than VeilSend's 10 MB local safety limit.");
+      setWorkflowError("This file is larger than VeilSend's 10 MB local safety limit.", "inputRejected");
       return;
     }
     try {
       const nextText = await file.text();
+      if (!isCurrentTextOperation(token)) return;
       if (nextText.includes("�")) throw new Error("This file does not appear to be valid UTF-8 text.");
       setText(nextText);
       setFilename(file.name);
     } catch (fileError) {
-      setError(readableError(fileError));
+      if (!isCurrentTextOperation(token)) return;
+      setWorkflowError(readableError(fileError), "inputRejected");
     }
   }
 
   async function runScan() {
+    if (textOperationPending.current || currentMode.current !== "text") return;
     if (!text.trim()) {
-      setError("Paste some text or choose a supported file first.");
+      setWorkflowError("Paste some text or choose a supported file first.", "inputRejected");
       return;
     }
-    setBusy(true);
-    setError("");
+    const token = ++textOperationGeneration.current;
+    setSavedFile(null);
+    setTextBusy(true);
+    setDropActive(false);
+    setWorkflowError("");
     try {
       const nextReport = await scanText(text, options);
+      if (!isCurrentTextOperation(token)) return;
       setReport(nextReport);
       setDecisions(Object.fromEntries(nextReport.findings.map((finding) => [finding.id, {
         id: finding.id,
@@ -256,34 +367,54 @@ function App() {
       setRevealed(new Set());
       setStage("review");
     } catch (scanError) {
-      setError(readableError(scanError));
+      if (!isCurrentTextOperation(token)) return;
+      setWorkflowError(readableError(scanError));
     } finally {
-      setBusy(false);
+      if (isCurrentTextOperation(token)) setTextBusy(false);
     }
   }
 
   async function runClean() {
-    if (!report) return;
-    setBusy(true);
-    setError("");
+    if (!report || textOperationPending.current || currentMode.current !== "text") return;
+    const token = ++textOperationGeneration.current;
+    const submittedDecisions = Object.values(decisions).map((decision) => ({ ...decision }));
+    const findingsRedacted = submittedDecisions.filter((decision) => decision.enabled).length;
+    setSavedFile(null);
+    setTextBusy(true);
+    setWorkflowError("");
     try {
       const nextResult = await sanitizeText({
         originalText: text,
         contentFingerprint: report.contentFingerprint,
         findings: report.findings,
-        decisions: Object.values(decisions),
+        decisions: submittedDecisions,
         options,
       });
-      setResult(nextResult);
+      if (!isCurrentTextOperation(token)) return;
+      setResult({ ...nextResult, findingsRedacted });
       setStage("result");
     } catch (cleanError) {
-      setError(readableError(cleanError));
+      if (!isCurrentTextOperation(token)) return;
+      setWorkflowError(readableError(cleanError));
     } finally {
-      setBusy(false);
+      if (isCurrentTextOperation(token)) setTextBusy(false);
     }
   }
 
   function reset() {
+    if (currentMode.current === "pdf") {
+      void pdfWorkflow.current?.leave(resetToText);
+      return;
+    }
+    if (currentMode.current === "image") {
+      void imageWorkflow.current?.leave(resetToText);
+      return;
+    }
+    resetToText();
+  }
+
+  function resetToText() {
+    invalidateTextOperations("text");
     setStage("add");
     setMode("text");
     setText("");
@@ -292,31 +423,49 @@ function App() {
     setResult(null);
     setDecisions({});
     setRevealed(new Set());
-    setError("");
+    setWorkflowError("");
+    setActiveDiagnostics(emptyWorkflowDiagnostics("text"));
     setCopied(false);
-    setSavedPath("");
   }
 
   function switchMode(nextMode: InputMode) {
+    if (currentMode.current === "pdf") {
+      void pdfWorkflow.current?.leave(() => completeModeSwitch(nextMode));
+      return;
+    }
+    if (currentMode.current === "image") {
+      void imageWorkflow.current?.leave(() => completeModeSwitch(nextMode));
+      return;
+    }
+    completeModeSwitch(nextMode);
+  }
+
+  function completeModeSwitch(nextMode: InputMode) {
+    invalidateTextOperations(nextMode);
     setMode(nextMode);
     setStage("add");
-    setError("");
+    setWorkflowError("");
+    setActiveDiagnostics(emptyWorkflowDiagnostics(nextMode));
   }
 
   async function copyResult() {
     if (!result) return;
+    const token = textOperationGeneration.current;
     await navigator.clipboard.writeText(result.cleanedText);
+    if (!isCurrentTextOperation(token)) return;
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1800);
   }
 
   async function saveResult() {
     if (!result) return;
+    const token = ++textOperationGeneration.current;
     try {
-      const path = await saveCleanedText(cleanedFilename(filename), result.cleanedText);
-      if (path) setSavedPath(path);
+      const saved = await saveCleanedText(cleanedFilename(filename), result.cleanedText);
+      if (isCurrentTextOperation(token) && saved) setSavedFile(saved);
     } catch (saveError) {
-      setError(readableError(saveError));
+      if (!isCurrentTextOperation(token)) return;
+      setWorkflowError(readableError(saveError), "saveFailed");
     }
   }
 
@@ -324,13 +473,23 @@ function App() {
     <div className="app-shell">
       <div className="paper-grain" aria-hidden="true" />
       <header className="app-header">
-        <button className="brand" type="button" onClick={reset} aria-label="Start a new VeilSend scan">
+        <button className="brand" type="button" disabled={imageBusy || pdfBusy} onClick={reset} aria-label="Start a new VeilSend scan">
           <span className="brand-mark"><ShieldCheck size={22} strokeWidth={2.3} /></span>
           <span><strong>VeilSend</strong><small>Outbound safety, on-device</small></span>
         </button>
         <div className="header-actions">
           <span className="runtime-badge"><span />{isDesktop() ? "Desktop engine" : "Browser preview"}</span>
-          <span className="build-label">Open-source foundation</span>
+          <button
+            ref={trustTrigger}
+            className={`build-label ${runtimeState === "loading" ? "loading" : runtimeInfo?.verifiedBuild ? "verified" : "unverified"}`}
+            type="button"
+            aria-haspopup="dialog"
+            aria-expanded={trustOpen}
+            onClick={() => setTrustOpen(true)}
+          >
+            <BuildIdentityIcon className={runtimeState === "loading" ? "spin" : undefined} size={15} />
+            <span><strong>{buildIdentity}</strong><small>{buildDetail}</small></span>
+          </button>
         </div>
       </header>
 
@@ -339,7 +498,7 @@ function App() {
           <StepRail stage={stage} />
           <PrivacyNote />
           <div className="scope-note">
-            <span>Milestone D</span>
+            <span>{buildIdentity}</span>
             <p>Text, image, and flattened PDF safety with local saved-file verification.</p>
           </div>
         </aside>
@@ -362,7 +521,16 @@ function App() {
 
               <div
                 className={`input-card ${dropActive ? "drop-active" : ""}`}
-                onDragOver={(event) => { event.preventDefault(); setDropActive(true); }}
+                aria-disabled={busy}
+                aria-busy={busy}
+                onDragOver={(event) => {
+                  event.preventDefault();
+                  if (textOperationPending.current) {
+                    event.dataTransfer.dropEffect = "none";
+                    return;
+                  }
+                  setDropActive(true);
+                }}
                 onDragLeave={() => setDropActive(false)}
                 onDrop={(event) => {
                   event.preventDefault();
@@ -376,25 +544,27 @@ function App() {
                     <span><FileText size={18} /></span>
                     <div><strong>{filename}</strong><small>{text ? `${formatBytes(new TextEncoder().encode(text).byteLength)} ready to scan` : "Paste text below or drop a file here"}</small></div>
                   </div>
-                  {text && <button className="quiet-button" type="button" onClick={() => { setText(""); setFilename("pasted-text.txt"); }}><X size={15} /> Clear</button>}
+                  {text && <button className="quiet-button" type="button" disabled={busy} onClick={() => { if (textOperationPending.current) return; setText(""); setFilename("pasted-text.txt"); setWorkflowError(""); }}><X size={15} /> Clear</button>}
                 </div>
                 <textarea
                   className="source-input"
                   value={text}
-                  onChange={(event) => { setText(event.target.value); setFilename("pasted-text.txt"); }}
+                  disabled={busy}
+                  onChange={(event) => { if (textOperationPending.current) return; setText(event.target.value); setFilename("pasted-text.txt"); setWorkflowError(""); }}
                   placeholder={`Paste terminal output, a debug log, JSON, or .env content…\n\nVeilSend will not send it anywhere.`}
                   spellCheck={false}
                   aria-label="Content to scan"
                 />
                 <div className="input-card-footer">
                   <div className="input-options">
-                    <button className="secondary-button" type="button" onClick={() => fileInput.current?.click()}>
+                    <button className="secondary-button" type="button" disabled={busy} onClick={() => { if (!textOperationPending.current) fileInput.current?.click(); }}>
                       <Upload size={16} /> Choose file
                     </button>
                     <input
                       ref={fileInput}
                       className="visually-hidden"
                       type="file"
+                      disabled={busy}
                       accept=".txt,.log,.json,.env,text/plain,application/json"
                       onChange={(event) => {
                         const file = event.target.files?.[0];
@@ -402,7 +572,7 @@ function App() {
                         event.target.value = "";
                       }}
                     />
-                    <button className="text-button" type="button" onClick={() => { setText(syntheticSample); setFilename("synthetic-support-log.txt"); setCustomTerms("Project Firefly"); }}>
+                    <button className="text-button" type="button" disabled={busy} onClick={() => { if (textOperationPending.current) return; setText(syntheticSample); setFilename("synthetic-support-log.txt"); setCustomTerms("Project Firefly"); setWorkflowError(""); }}>
                       <Sparkles size={15} /> Try safe sample
                     </button>
                   </div>
@@ -418,7 +588,7 @@ function App() {
                 <summary><Plus size={15} /> Add sensitive words for this scan</summary>
                 <label>
                   <span>Project names, customer names, or internal codenames — one per line</span>
-                  <textarea value={customTerms} onChange={(event) => setCustomTerms(event.target.value)} placeholder="Project Firefly&#10;Example Customer" />
+                  <textarea value={customTerms} disabled={busy} onChange={(event) => { if (!textOperationPending.current) setCustomTerms(event.target.value); }} placeholder="Project Firefly&#10;Example Customer" />
                 </label>
               </details>
 
@@ -432,7 +602,7 @@ function App() {
 
           {mode === "text" && stage === "review" && report && (
             <section className="stage-view review-stage">
-              <button className="back-button" type="button" onClick={() => setStage("add")}><ArrowLeft size={16} /> Back to source</button>
+              <button className="back-button" type="button" disabled={busy} onClick={() => { if (!textOperationPending.current) setStage("add"); }}><ArrowLeft size={16} /> Back to source</button>
               <div className="review-heading">
                 <div>
                   <div className="eyebrow"><FileSearch size={15} /> Review before cleaning</div>
@@ -461,12 +631,15 @@ function App() {
                           decision={decisions[finding.id]}
                           rawValue={isDesktop() ? sliceUtf8Range(text, finding.start, finding.end) : text.slice(finding.start, finding.end)}
                           revealed={revealed.has(finding.id)}
+                          disabled={busy}
                           onReveal={() => setRevealed((current) => {
                             const next = new Set(current);
                             if (next.has(finding.id)) next.delete(finding.id); else next.add(finding.id);
                             return next;
                           })}
-                          onDecision={(next) => setDecisions((current) => ({ ...current, [finding.id]: next }))}
+                          onDecision={(next) => {
+                            if (!textOperationPending.current) setDecisions((current) => ({ ...current, [finding.id]: next }));
+                          }}
                         />
                       ))}
                     </div>
@@ -530,8 +703,12 @@ function App() {
                   </button>
                   <button className="primary-button" type="button" onClick={() => void saveResult()}><Download size={17} /> Save clean copy</button>
                 </div>
-                {savedPath && <div className="save-confirmation"><Check size={14} /> Saved to {savedPath}</div>}
+                {savedFile && <div className="save-confirmation"><Check size={14} /> Saved to {savedFile.savedPath}</div>}
               </div>
+
+              {savedFile && (
+                <VerificationReceipt data={textVerificationReceipt(runtimeInfo, savedFile, result, result.findingsRedacted)} />
+              )}
 
               <div className="result-footer">
                 <button className="text-button" type="button" onClick={reset}><RefreshCcw size={15} /> Scan something else</button>
@@ -544,8 +721,12 @@ function App() {
             <ImageWorkflow
               stage={stage}
               onStageChange={setStage}
-              onSwitchMode={switchMode}
-              onError={setError}
+              onSwitchMode={completeModeSwitch}
+              onError={setWorkflowError}
+              onDiagnosticsChange={onWorkflowDiagnosticsChange}
+              runtimeInfo={runtimeInfo}
+              navigationRef={imageWorkflow}
+              onBusyChange={setImageBusy}
             />
           )}
 
@@ -553,16 +734,31 @@ function App() {
             <PdfWorkflow
               stage={stage}
               onStageChange={setStage}
-              onSwitchMode={switchMode}
-              onError={setError}
+              onSwitchMode={completeModeSwitch}
+              onError={setWorkflowError}
+              onDiagnosticsChange={onWorkflowDiagnosticsChange}
+              runtimeInfo={runtimeInfo}
+              navigationRef={pdfWorkflow}
+              onBusyChange={setPdfBusy}
             />
           )}
         </main>
       </div>
 
+      <TrustCenter
+        open={trustOpen}
+        runtimeInfo={runtimeInfo}
+        runtimeState={runtimeState}
+        workflowDiagnostics={workflowDiagnostics}
+        onClose={() => {
+          setTrustOpen(false);
+          window.requestAnimationFrame(() => trustTrigger.current?.focus());
+        }}
+      />
+
       <footer className="app-footer">
-        <span>VeilSend v0.1 · Milestone D</span>
-        <span><span className="offline-dot" /> Designed to work offline</span>
+        <span>VeilSend {runtimeInfo?.appVersion ?? "0.2.0-beta.1"} · {buildIdentity}</span>
+        <span><span className="offline-dot" /> {runtimeInfo ? buildDetail : "Designed to work offline"}</span>
       </footer>
     </div>
   );

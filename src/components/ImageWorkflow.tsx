@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type Ref } from "react";
 import {
   AlertTriangle,
   ArrowLeft,
@@ -27,26 +27,39 @@ import {
   cleanImageFile,
   clearImageSession,
   isDesktop,
+  openDroppedImage,
   pasteImage,
   pickImage,
 } from "../lib/bridge";
+import { useDesktopFileDrop } from "../hooks/useDesktopFileDrop";
+import { dropPrompt } from "../lib/fileDrop";
 import {
   buildDefaultDecisions,
   buildVisualFindings,
   isImagePasteShortcut,
   remainingRiskCount,
 } from "../lib/imageWorkflowModel";
+import { deriveImageDiagnostics, type DiagnosticErrorCode, type WorkflowDiagnostics } from "../lib/diagnostics";
+import { imageVerificationReceipt } from "../lib/verificationReceipt";
 import type {
   Category,
   CleanedImageFile,
   ImageMetadataCategory,
   ImageSession,
   ImageRedactionDecision,
+  RuntimeInfo,
   Severity,
 } from "../lib/types";
 import { InputModeTabs, type InputMode } from "./InputModeTabs";
+import { VerificationReceipt } from "./VerificationReceipt";
 
 type Stage = "add" | "review" | "result";
+const cleanupFailureMessage = "Could not clear the previous image session. Restart VeilSend before choosing another image.";
+
+export interface ImageWorkflowHandle {
+  // The callback may unmount this workflow only after its cleanup gate succeeds.
+  leave: (onLeave: () => void) => Promise<void>;
+}
 
 const severityLabel: Record<Severity, string> = {
   low: "Notice",
@@ -94,16 +107,52 @@ export function ImageWorkflow({
   onStageChange,
   onSwitchMode,
   onError,
+  onDiagnosticsChange,
+  runtimeInfo = null,
+  navigationRef,
+  onBusyChange,
 }: {
   stage: Stage;
   onStageChange: (stage: Stage) => void;
   onSwitchMode: (mode: Exclude<InputMode, "image">) => void;
-  onError: (message: string) => void;
+  onError: (message: string, code?: DiagnosticErrorCode) => void;
+  onDiagnosticsChange: (next: WorkflowDiagnostics) => void;
+  runtimeInfo?: RuntimeInfo | null;
+  navigationRef?: Ref<ImageWorkflowHandle>;
+  onBusyChange?: (busy: boolean) => void;
 }) {
   const [session, setSession] = useState<ImageSession | null>(null);
   const [result, setResult] = useState<CleanedImageFile | null>(null);
   const [decisions, setDecisions] = useState<Record<string, ImageRedactionDecision>>({});
   const [busy, setBusy] = useState(false);
+  const [dropActive, setDropActive] = useState(false);
+  const currentStage = useRef(stage);
+  currentStage.current = stage;
+  // Synchronous gate also covers reentrant calls before React renders disabled controls.
+  const operationState = useRef<"idle" | "working" | "cleanup">("idle");
+  const operationGeneration = useRef(0);
+
+  useImperativeHandle(navigationRef, () => ({ leave: leaveWorkflow }));
+
+  useEffect(() => () => { operationGeneration.current += 1; }, []);
+
+  useEffect(() => {
+    onDiagnosticsChange(deriveImageDiagnostics({
+      stage,
+      inputBytes: stage === "add" ? null : session?.inspection.bytes ?? null,
+      metadataInspected: session !== null,
+      textAvailability: session?.ocr.availability ?? null,
+      faceAvailability: session?.faces.availability ?? null,
+      qrAvailability: session?.qr.availability ?? null,
+      barcodeAvailability: session?.barcodes.availability ?? null,
+      resultChecks: result ? {
+        text: result.verification.ocrChecked,
+        face: result.verification.faceChecked,
+        qr: result.verification.qrChecked,
+        barcode: result.verification.barcodeChecked,
+      } : null,
+    }));
+  }, [onDiagnosticsChange, result, session, stage]);
 
   const textFindings = session?.ocr.report?.findings ?? [];
   const faceFindings = session?.faces.findings ?? [];
@@ -139,99 +188,144 @@ export function ImageWorkflow({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [busy, stage]);
 
-  function acceptSession(nextSession: ImageSession) {
+  const acceptSession = useCallback((nextSession: ImageSession) => {
     setSession(nextSession);
     setDecisions(buildDefaultDecisions(nextSession));
     setResult(null);
+    currentStage.current = "review";
     onStageChange("review");
-  }
+  }, [onStageChange]);
 
-  async function clearCurrentSession() {
+  async function clearCurrentSession(token?: number) {
     if (!session) return;
-    await clearImageSession();
+    try {
+      await clearImageSession();
+    } catch {
+      throw new Error(cleanupFailureMessage);
+    }
+    if (token !== undefined && operationGeneration.current !== token) return;
     setSession(null);
     setDecisions({});
   }
 
-  async function chooseImage() {
-    setBusy(true);
+  const setOperationState = useCallback((next: "idle" | "working" | "cleanup") => {
+    operationState.current = next;
+    setBusy(next !== "idle");
+    onBusyChange?.(next !== "idle");
+  }, [onBusyChange]);
+
+  function cancelCurrentOperation(): number {
+    const token = ++operationGeneration.current;
+    setOperationState("cleanup");
+    return token;
+  }
+
+  const acquireImage = useCallback(async (load: () => Promise<ImageSession | null>) => {
+    if (!isDesktop() || currentStage.current !== "add" || operationState.current !== "idle") return;
+    const token = ++operationGeneration.current;
+    setOperationState("working");
     onError("");
     try {
-      await clearCurrentSession();
-      const nextSession = await pickImage();
+      // Native accepted loaders replace atomically; canceling a picker preserves
+      // the previous session. Never clear again after a successful replacement.
+      const nextSession = await load();
+      if (operationGeneration.current !== token) return;
       if (!nextSession) return;
       acceptSession(nextSession);
-    } catch (error) {
-      onError(readableError(error));
+    } catch {
+      if (operationGeneration.current !== token) return;
+      setSession(null);
+      setDecisions({});
+      setResult(null);
+      onStageChange("add");
+      onError("Could not open that image. Choose or paste one supported JPEG/PNG image.", "inputRejected");
     } finally {
-      setBusy(false);
+      if (operationGeneration.current === token) setOperationState("idle");
     }
-  }
+  }, [acceptSession, onError, onStageChange, setOperationState]);
 
-  async function pasteScreenshot() {
-    setBusy(true);
-    onError("");
-    try {
-      await clearCurrentSession();
-      acceptSession(await pasteImage());
-    } catch (error) {
-      onError(readableError(error));
-    } finally {
-      setBusy(false);
-    }
-  }
+  function chooseImage() { return acquireImage(pickImage); }
+  function pasteScreenshot() { return acquireImage(pasteImage); }
+  const dropImage = useCallback((path: string) => acquireImage(() => openDroppedImage(path)), [acquireImage]);
+  useDesktopFileDrop({
+    enabled: stage === "add" && isDesktop(), kind: "image", busy,
+    onDrop: dropImage, onActive: setDropActive,
+    onError: (message) => onError(message, "inputRejected"),
+  });
 
   async function createCleanCopy() {
-    if (!session) return;
-    setBusy(true);
+    if (!session || operationState.current !== "idle") return;
+    const token = ++operationGeneration.current;
+    setOperationState("working");
     onError("");
     try {
       const nextResult = await cleanImageFile(
         session.sessionId,
         Object.values(decisions),
       );
+      if (operationGeneration.current !== token) return;
       if (!nextResult) return;
       setResult(nextResult);
       onStageChange("result");
     } catch (error) {
-      onError(readableError(error));
+      if (operationGeneration.current !== token) return;
+      onError(readableError(error), "workflowFailed");
     } finally {
-      setBusy(false);
+      if (operationGeneration.current === token) setOperationState("idle");
     }
   }
 
   async function startAgain() {
-    let clearError = "";
+    if (operationState.current === "cleanup") return;
+    const token = cancelCurrentOperation();
+    const clear = clearCurrentSession(token);
+    setResult(null);
+    onError("");
+    onStageChange("add");
     try {
-      await clearCurrentSession();
+      await clear;
     } catch (error) {
-      clearError = readableError(error);
-    } finally {
-      setResult(null);
-      onError(clearError);
-      onStageChange("add");
+      if (operationGeneration.current === token) {
+        onError(cleanupFailureMessage, "workflowFailed");
+        return;
+      }
+      return;
     }
+    if (operationGeneration.current === token) setOperationState("idle");
   }
 
-  async function switchInputMode(mode: Exclude<InputMode, "image">) {
+  async function leaveWorkflow(onLeave: () => void) {
+    if (operationState.current !== "idle") return;
+    const token = cancelCurrentOperation();
     try {
-      await clearCurrentSession();
-      onError("");
+      await clearCurrentSession(token);
     } catch (error) {
-      onError(readableError(error));
-    } finally {
-      onSwitchMode(mode);
+      if (operationGeneration.current !== token) return;
+      onError(cleanupFailureMessage, "workflowFailed");
+      return;
     }
+    if (operationGeneration.current !== token) return;
+    onError("");
+    // Keep the synchronous gate closed until the parent unmounts this instance.
+    // A brand reset and the mode tabs must not start competing cleanups.
+    onLeave();
+    onBusyChange?.(false);
+  }
+
+  function switchInputMode(mode: Exclude<InputMode, "image">) {
+    return leaveWorkflow(() => onSwitchMode(mode));
   }
 
   if (stage === "add") {
     return (
       <section className="stage-view add-stage image-add-stage">
-        <InputModeTabs active="image" onChange={(mode) => mode !== "image" && void switchInputMode(mode)} />
+        <InputModeTabs active="image" disabled={busy} onChange={(mode) => mode !== "image" && void switchInputMode(mode)} />
         <div className="eyebrow"><Fingerprint size={15} /> Five local image checks</div>
         <h1>Find what the image<br />should not reveal.</h1>
         <p className="lead">Choose a JPEG or PNG, or paste a screenshot. VeilSend checks visible text, faces, QR codes, one-dimensional barcodes, and hidden metadata—all locally.</p>
 
+        <div className={`native-drop-zone ${busy ? "drop-busy" : dropActive ? "drop-active" : "drop-idle"}`} aria-busy={busy}>
+        <span className="drop-instruction" role="status" aria-live="polite">{dropPrompt("image", busy)}</span>
         <div className="image-picker-card">
           <div className="image-picker-visual" aria-hidden="true">
             <div className="photo-sheet photo-sheet-back" />
@@ -268,6 +362,7 @@ export function ImageWorkflow({
             {!isDesktop() && <div className="desktop-only-note">Image checks and cleaning run in the Windows desktop app. The browser preview keeps this control disabled.</div>}
           </div>
         </div>
+        </div>
 
         <div className="trust-row">
           <span><LockKeyhole size={15} /> No upload</span>
@@ -287,7 +382,7 @@ export function ImageWorkflow({
 
     return (
       <section className="stage-view review-stage image-review-stage">
-        <button className="back-button" type="button" onClick={() => onStageChange("add")}><ArrowLeft size={16} /> Choose a different image</button>
+        <button className="back-button" type="button" onClick={() => void startAgain()}><ArrowLeft size={16} /> Choose a different image</button>
         <div className="review-heading">
           <div>
             <div className="eyebrow"><ScanLine size={15} /> Image safety review</div>
@@ -618,6 +713,8 @@ export function ImageWorkflow({
             <div className="saved-path"><Check size={14} /> Saved to {result.savedPath}</div>
           </div>
         </div>
+
+        <VerificationReceipt data={imageVerificationReceipt(runtimeInfo, result)} />
 
         <div className="result-footer">
           <button className="text-button" type="button" onClick={() => void startAgain()}><RefreshCcw size={15} /> Check another image</button>

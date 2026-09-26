@@ -1,0 +1,190 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows-beta:
+    runs-on: windows-2025
+    timeout-minutes: 75
+    env:
+      VEILSEND_GIT_SHA: ${{ github.sha }}
+      VEILSEND_RELEASE_CHANNEL: beta
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          cache: npm
+      - name: Verify tag, version, and release asset contract
+        id: contract
+        shell: pwsh
+        run: |
+          $version = node scripts/release-contract.mjs $env:GITHUB_REF_NAME
+          if ($LASTEXITCODE -ne 0) { throw 'Release identity contract failed.' }
+          $assetJson = node --input-type=module -e "import { releaseAssetNames } from './scripts/release-contract.mjs'; process.stdout.write(JSON.stringify(releaseAssetNames(process.argv[1])))" $version
+          if ($LASTEXITCODE -ne 0) { throw 'Release asset contract failed.' }
+          $assetNames = $assetJson | ConvertFrom-Json
+          Add-Content -LiteralPath $env:GITHUB_ENV -Value "VEILSEND_VERSION=$version"
+          Add-Content -LiteralPath $env:GITHUB_ENV -Value "VEILSEND_INSTALLER_NAME=$($assetNames.installer)"
+          Add-Content -LiteralPath $env:GITHUB_ENV -Value "VEILSEND_PORTABLE_NAME=$($assetNames.portable)"
+          Add-Content -LiteralPath $env:GITHUB_ENV -Value "VEILSEND_SBOM_NAME=$($assetNames.sbom)"
+          Add-Content -LiteralPath $env:GITHUB_ENV -Value "VEILSEND_CHECKSUMS_NAME=$($assetNames.checksums)"
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "version=$version"
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "sbom=$($assetNames.sbom)"
+      - name: Refuse an existing release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $previousNativeErrorPreference = $PSNativeCommandUseErrorActionPreference
+          try {
+            $PSNativeCommandUseErrorActionPreference = $false
+            $apiOutput = @(gh api --include --method GET "repos/$env:GITHUB_REPOSITORY/releases/tags/$env:GITHUB_REF_NAME" 2>&1)
+            $apiExitCode = $LASTEXITCODE
+          } finally {
+            $PSNativeCommandUseErrorActionPreference = $previousNativeErrorPreference
+          }
+
+          if ($apiExitCode -eq 0) {
+            throw "Release already exists; inspect and explicitly remove a failed draft before retrying."
+          }
+
+          $statusCodes = @(
+            foreach ($line in $apiOutput) {
+              $text = [string]$line
+              if ($text -match '^HTTP/\S+\s+(?<status>\d{3})\b') {
+                [int]$Matches.status
+              } elseif ($text -match '\(HTTP (?<status>\d{3})\)\s*$') {
+                [int]$Matches.status
+              }
+            }
+          )
+          if ($statusCodes.Count -gt 0 -and $statusCodes[-1] -eq 404) {
+            Write-Output 'No existing release found for this tag.'
+            exit 0
+          }
+
+          $status = if ($statusCodes.Count -gt 0) { $statusCodes[-1] } else { 'unknown' }
+          throw "Unable to determine whether release exists (gh exit $apiExitCode; HTTP $status)."
+      - name: Install Rust toolchain
+        shell: pwsh
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt,clippy
+          if ($LASTEXITCODE -ne 0) { throw 'Rust toolchain installation failed.' }
+          rustup default stable
+          if ($LASTEXITCODE -ne 0) { throw 'Rust toolchain selection failed.' }
+      - name: Install dependencies
+        run: npm ci
+      - name: Run release gates
+        shell: pwsh
+        run: |
+          npm run test:release
+          if ($LASTEXITCODE -ne 0) { throw 'Release contract tests failed.' }
+          npm run check:licenses
+          if ($LASTEXITCODE -ne 0) { throw 'License check failed.' }
+          npm test
+          if ($LASTEXITCODE -ne 0) { throw 'Frontend tests failed.' }
+          npm run build
+          if ($LASTEXITCODE -ne 0) { throw 'Frontend build failed.' }
+          cargo fmt --all -- --check
+          if ($LASTEXITCODE -ne 0) { throw 'Rust formatting check failed.' }
+          cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+          if ($LASTEXITCODE -ne 0) { throw 'Rust lint check failed.' }
+          cargo test --locked --workspace --all-features
+          if ($LASTEXITCODE -ne 0) { throw 'Rust tests failed.' }
+          npm audit --audit-level=high
+          if ($LASTEXITCODE -ne 0) { throw 'npm audit failed.' }
+          cargo install cargo-audit --version 0.22.2 --locked
+          if ($LASTEXITCODE -ne 0) { throw 'Cargo audit installation failed.' }
+          cargo audit
+          if ($LASTEXITCODE -ne 0) { throw 'Cargo audit failed.' }
+      - name: Build NSIS and portable executable
+        run: npm run tauri -- build -- --locked
+      - name: Stage unsigned beta assets
+        shell: pwsh
+        run: ./scripts/stage-release.ps1 -Version $env:VEILSEND_VERSION -ArtifactsDirectory artifacts
+      - name: Verify installed NSIS notice bundle
+        shell: pwsh
+        run: ./scripts/verify-installed-notice.ps1 -InstallerPath (Join-Path artifacts $env:VEILSEND_INSTALLER_NAME) -ExpectedNoticePath THIRD_PARTY_LICENSES.md -InstallDirectory (Join-Path $env:RUNNER_TEMP "veilsend-notice-install-$env:GITHUB_RUN_ID")
+      - name: Generate CycloneDX SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        with:
+          path: .
+          format: cyclonedx-json
+          output-file: artifacts/${{ steps.contract.outputs.sbom }}
+          upload-artifact: false
+          upload-release-assets: false
+          github-token: ""
+      - name: Generate SHA-256 file
+        shell: pwsh
+        run: |
+          Get-ChildItem artifacts -File |
+            Where-Object Name -ne $env:VEILSEND_CHECKSUMS_NAME |
+            Sort-Object Name |
+            ForEach-Object { "{0}  {1}" -f (Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName).Hash.ToLowerInvariant(), $_.Name } |
+            Set-Content -Encoding ascii (Join-Path artifacts $env:VEILSEND_CHECKSUMS_NAME)
+      - name: Verify exact assets and SHA-256 file
+        shell: pwsh
+        run: |
+          $expectedAssets = @(
+            $env:VEILSEND_INSTALLER_NAME
+            $env:VEILSEND_PORTABLE_NAME
+            $env:VEILSEND_SBOM_NAME
+            $env:VEILSEND_CHECKSUMS_NAME
+          ) | Sort-Object
+          $actualAssets = @(Get-ChildItem -LiteralPath artifacts -File | ForEach-Object Name | Sort-Object)
+          $assetDifference = @(Compare-Object -ReferenceObject $expectedAssets -DifferenceObject $actualAssets)
+          if ($assetDifference.Count -ne 0) {
+            throw "Unexpected release asset set: $($assetDifference | Out-String)"
+          }
+
+          $lines = Get-Content -LiteralPath (Join-Path artifacts $env:VEILSEND_CHECKSUMS_NAME)
+          $checksummedNames = @()
+          foreach ($line in $lines) {
+            if ($line -notmatch '^([0-9a-f]{64})  (.+)$') { throw "Malformed checksum line: $line" }
+            $checksummedNames += $Matches[2]
+            $asset = Join-Path (Resolve-Path artifacts).Path $Matches[2]
+            if (-not (Test-Path -LiteralPath $asset -PathType Leaf)) { throw "Missing checksummed asset: $($Matches[2])" }
+            $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $asset).Hash.ToLowerInvariant()
+            if ($actual -ne $Matches[1]) { throw "Checksum mismatch: $($Matches[2])" }
+          }
+          $expectedChecksummedNames = @($expectedAssets | Where-Object { $_ -ne $env:VEILSEND_CHECKSUMS_NAME })
+          $checksumDifference = @(Compare-Object -ReferenceObject $expectedChecksummedNames -DifferenceObject ($checksummedNames | Sort-Object))
+          if ($checksumDifference.Count -ne 0) {
+            throw "Unexpected checksummed asset set: $($checksumDifference | Out-String)"
+          }
+      - name: Upload review artifact
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: veilsend-v${{ steps.contract.outputs.version }}-release-assets
+          path: artifacts/*
+          if-no-files-found: error
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
+        with:
+          subject-path: artifacts/*
+      - name: Create draft pre-release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $assets = @(
+            (Join-Path artifacts $env:VEILSEND_INSTALLER_NAME)
+            (Join-Path artifacts $env:VEILSEND_PORTABLE_NAME)
+            (Join-Path artifacts $env:VEILSEND_SBOM_NAME)
+            (Join-Path artifacts $env:VEILSEND_CHECKSUMS_NAME)
+          )
+          gh release create $env:GITHUB_REF_NAME $assets --draft --prerelease --verify-tag --title "VeilSend $env:VEILSEND_VERSION" --notes-file RELEASE_NOTES.md

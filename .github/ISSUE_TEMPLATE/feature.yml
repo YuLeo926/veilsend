@@ -1,0 +1,37 @@
+name: Feature request
+description: Suggest a workflow improvement without private samples.
+title: "[Feature] "
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the workflow using synthetic examples only. Do not attach real files, paths, content, screenshots, OCR text, decoded payloads, logs, or customer data. Security issues belong in GitHub private vulnerability reporting.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem and workflow
+      description: What task is difficult, and at what step? Use no real sample data.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+      description: Describe the desired behavior with synthetic examples if needed.
+    validations:
+      required: true
+  - type: textarea
+    id: privacy-impact
+    attributes:
+      label: Privacy and offline impact
+      description: Would this introduce source-data exposure, network access, logging, new permissions, or change verification semantics?
+    validations:
+      required: true
+  - type: checkboxes
+    id: privacy-confirmation
+    attributes:
+      label: Privacy confirmation
+      options:
+        - label: This request contains no real files, paths, content, screenshots, OCR text, decoded payloads, or customer data.
+          required: true

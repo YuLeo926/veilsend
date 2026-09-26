@@ -4,15 +4,15 @@ VeilSend handles content that may contain credentials and personal information. 
 
 ## Reporting a vulnerability
 
-Until a private reporting address is published, do not open a public issue containing real secrets, personal data, or private files. Open an issue containing only a high-level description and synthetic reproduction steps, and request a private contact channel.
+Use [GitHub private vulnerability reporting](https://github.com/YuLeo926/veilsend/security/advisories/new) for security defects. The repository owner must enable that feature before publishing the beta; if the private route is unavailable, do not post vulnerability details publicly. Contact the maintainer through a non-sensitive high-level request for a private channel instead.
 
-Never attach real logs, tokens, screenshots, configuration, or customer data to a report.
+Never attach real logs, tokens, screenshots, configuration, file paths, OCR text, decoded payloads, or customer data to a report. Provide a synthetic reproduction only.
 
 ## Supported code
 
-The current `main` branch is a pre-release foundation. There are no supported public releases yet.
+The supported beta target is `0.2.0-beta.1` once published. Earlier versions and development branches are not supported release channels. This document does not assert that a public beta or its private reporting setting is already live.
 
-## Threat model for v0.1
+## Threat model for v0.2 beta
 
 VeilSend aims to reduce accidental disclosure while a user prepares local text, screenshots, images, or PDFs for sharing. It protects against common, recognizable secret and PII patterns in supported text, applies those rules to locally recognized visual text, locates faces, QR codes, and supported one-dimensional barcodes, irreversibly covers user-selected regions, removes supported privacy metadata from JPEG and PNG copies, and rebuilds PDF pages as controlled lossless images.
 

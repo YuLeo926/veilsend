@@ -3,10 +3,15 @@ import type { PdfSession } from "./types";
 import {
   buildPdfDefaultDecisions,
   buildPdfFindings,
+  clampPdfPage,
+  imageRectPercentStyle,
+  isEditableTarget,
   normalizedRectangleFromPoints,
   pageChecksComplete,
+  pdfShortcutAction,
   remainingPdfRiskCount,
   resizeNormalizedRectangle,
+  stepPdfZoom,
 } from "./pdfWorkflowModel";
 
 const session = {
@@ -64,6 +69,57 @@ const session = {
 } satisfies PdfSession;
 
 describe("PDF workflow model", () => {
+  it("maps review shortcuts without taking editable, modified, busy, or other-stage keys", () => {
+    const button = { tagName: "BUTTON", isContentEditable: false } as unknown as EventTarget;
+    const input = { tagName: "INPUT", isContentEditable: false } as unknown as EventTarget;
+    for (const [key, action] of Object.entries({ PageDown: "nextPage", PageUp: "previousPage", "+": "zoomIn", "=": "zoomIn", "-": "zoomOut", Escape: "cancelDraft" })) {
+      expect(pdfShortcutAction({ key, target: button }, "review", false)).toBe(action);
+      expect(pdfShortcutAction({ key, target: input }, "review", false)).toBe(null);
+      expect(pdfShortcutAction({ key, target: button }, "add", false)).toBe(null);
+      expect(pdfShortcutAction({ key, target: button }, "result", false)).toBe(null);
+      expect(pdfShortcutAction({ key, target: button }, "review", true)).toBe(null);
+      for (const modifier of ["ctrlKey", "metaKey", "altKey"]) {
+        expect(pdfShortcutAction({ key, target: button, [modifier]: true }, "review", false)).toBe(null);
+      }
+    }
+    expect(pdfShortcutAction({ key: "Tab", target: button }, "review", false)).toBe(null);
+  });
+
+  it("steps zoom inside the 50-200 range and treats fit modes as 100%", () => {
+    expect(stepPdfZoom(50, -1)).toBe(50);
+    expect(stepPdfZoom(100, 1)).toBe(125);
+    expect(stepPdfZoom("fitWidth", 1)).toBe(125);
+    expect(stepPdfZoom("fitPage", -1)).toBe(75);
+    expect(stepPdfZoom(200, 1)).toBe(200);
+  });
+
+  it("keeps image overlay percentages independent of zoom", () => {
+    expect(imageRectPercentStyle({ x: 200, y: 100, width: 400, height: 200 }, 1000, 500))
+      .toEqual({ left: "20%", top: "20%", width: "40%", height: "40%" });
+  });
+
+  it.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY])(
+    "rejects invalid page dimensions (%s)",
+    (dimension) => {
+      expect(() => imageRectPercentStyle({ x: 1, y: 1, width: 2, height: 2 }, dimension, 100))
+        .toThrow("PDF page dimensions must be positive finite numbers");
+      expect(() => imageRectPercentStyle({ x: 1, y: 1, width: 2, height: 2 }, 100, dimension))
+        .toThrow("PDF page dimensions must be positive finite numbers");
+    },
+  );
+
+  it("clamps pages and ignores editable shortcut targets", () => {
+    expect(clampPdfPage(0, 3, -1)).toBe(0);
+    expect(clampPdfPage(2, 3, 1)).toBe(2);
+    expect(clampPdfPage(0, 0, 1)).toBe(0);
+    expect(isEditableTarget({ tagName: "INPUT", isContentEditable: false } as unknown as EventTarget)).toBe(true);
+    expect(isEditableTarget({ tagName: "TEXTAREA", isContentEditable: false } as unknown as EventTarget)).toBe(true);
+    expect(isEditableTarget({ tagName: "SELECT", isContentEditable: false } as unknown as EventTarget)).toBe(true);
+    expect(isEditableTarget({ tagName: "DIV", isContentEditable: true } as unknown as EventTarget)).toBe(true);
+    expect(isEditableTarget({ tagName: "BUTTON", isContentEditable: false } as unknown as EventTarget)).toBe(false);
+    expect(isEditableTarget(null)).toBe(false);
+  });
+
   it("keeps findings from different pages uniquely scoped and selected by default", () => {
     const findings = buildPdfFindings(session);
     const decisions = buildPdfDefaultDecisions(session);

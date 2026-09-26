@@ -6,20 +6,64 @@ Run these checks before committing changes:
 
 ```bash
 cargo fmt --all -- --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
+cargo clippy --locked --workspace --all-targets -- -D warnings
+cargo test --locked --workspace
 npm audit --audit-level=moderate
+npm run check:licenses
 npm test
 npm run build
-cargo check -p veilsend
+cargo check --locked -p veilsend
 cargo audit
 ```
 
-For the final offline executable, use `npm run tauri build -- --no-bundle`. A plain `cargo build --release` does not run the frontend build or enable Tauri's embedded custom protocol and may leave the executable pointing at the development server.
+The release documentation contract runs under `npm run test:release`. For visual changes to PDF covers or zoom, run `node scripts/check-pdf-overlay-layout.mjs` on Windows with installed Edge, or pass an absolute Edge/Chromium executable path. It checks actual browser geometry at percentage and fit zoom levels; complete the separate packaged-app PDF acceptance flow before release.
+
+For the final offline executable, use `npm run tauri -- build --no-bundle -- --locked`. A plain `cargo build --release` does not run the frontend build or enable Tauri's embedded custom protocol and may leave the executable pointing at the development server. The separator before `--locked` passes that flag to Tauri's Cargo runner; `npm run tauri build -- --locked` is not equivalent and this Tauri CLI rejects it as an unknown top-level option.
 
 The last check compiles the Windows desktop shell and therefore requires local endpoint security to allow Cargo-generated build scripts. Do not disable endpoint security automatically. If an organization blocks `target/**/build-script-build.exe`, ask its administrator to approve the Rust/Tauri build workflow or build in an approved development environment.
 
-`cargo audit` currently exits successfully with no vulnerability advisories. It also reports maintenance warnings for GTK3-era crates retained in Tauri's cross-platform dependency graph; the Windows target does not compile or link those Linux GTK dependencies. Re-evaluate the warnings before shipping a Linux build.
+The 2026-09-26 `cargo audit` check exited successfully with no vulnerability advisories, but seven maintenance warnings remain. Two cross-platform dependencies are absent from the Windows x64 graph; five unmaintained Unicode dependencies through `urlpattern -> tauri-utils` do affect the Windows build/runtime graph. See the current [dependency audit warning inventory](release.md#dependency-audit-warning-tracking) for package names, advisory IDs and follow-up. Reassess all warnings before publication, not only before a Linux build; do not add audit ignore flags or describe the audit as warning-free.
+
+## Hosted quality gate
+
+Pull requests and pushes to `master` run the read-only `quality / windows` workflow on `windows-2025`. The workflow uses the committed npm and Cargo lockfiles and runs this sequence:
+
+```bash
+npm ci
+npm run test:release
+npm run check:licenses
+npm test
+npm run build
+cargo fmt --all -- --check
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+cargo test --locked --workspace --all-features
+npm audit --audit-level=high
+cargo install cargo-audit --version 0.22.2 --locked
+cargo audit
+```
+
+All dependency-resolving Cargo commands use the committed lockfile and fail instead of updating dependency resolution. `npm run check:licenses` is reproducible from the committed lockfiles; on a first or clean environment Cargo may fetch the locked crate sources before `cargo metadata --locked` can compare the generated production license bundle. `cargo fmt` does not resolve dependencies, so `--locked` does not apply to it.
+
+The hosted job produces no artifacts, releases, attestations, or write permissions. Detector-dependent ignored tests for Windows OCR, face detection, and PDF acceptance remain part of controlled Windows acceptance rather than an ordinary hosted quality pass.
+
+## Draft beta release workflow
+
+Pushing the exact `v0.2.0-beta.1` tag starts the release-only `release / windows-beta` workflow. The workflow rejects every other `v*` tag through the repository release contract, repeats all hosted quality gates, builds the current-user NSIS installer and portable executable once, and stages the exact asset names exported by `scripts/release-contract.mjs`.
+
+The job generates a CycloneDX JSON SBOM and `SHA256SUMS.txt`, verifies the complete four-file asset set and every checksum, uploads the `veilsend-v0.2.0-beta.1-release-assets` review artifact, and creates GitHub build-provenance attestations. It then creates a **draft pre-release** using `RELEASE_NOTES.md`; it never publishes the Release. If that tag already has a Release, including a draft, the job stops. A maintainer must inspect and explicitly delete a failed draft before retrying, so a rerun cannot silently replace assets.
+
+Release permissions (`contents: write`, `id-token: write`, and `attestations: write`) exist only in this tag-triggered workflow. Pull requests and ordinary branch pushes cannot invoke it and remain covered by the read-only hosted quality job. All third-party Actions are pinned to full commit SHAs.
+
+To validate the release asset contract locally without pushing a tag or creating a GitHub Release, run:
+
+```powershell
+npm run test:release
+npm run check:licenses
+npm run tauri -- build -- --locked
+pwsh -NoProfile -File scripts/stage-release.ps1 -Version 0.2.0-beta.1 -ArtifactsDirectory artifacts
+```
+
+After generating `artifacts/veilsend-0.2.0-beta.1-sbom.cdx.json` with the pinned workflow action, the workflow hashes the installer, portable ZIP, and SBOM in filename order. The resulting `SHA256SUMS.txt` uses lowercase SHA-256 followed by two spaces and the asset filename, and the next step recalculates every digest before attestation and draft creation. Local validation must not push a tag, invoke the remote workflow, or call `gh release create`.
 
 ## Browser preview
 
@@ -66,21 +110,21 @@ cargo run -p veilsend-core --example make_metadata_fixture -- output/veilsend-me
 `fixtures/ocr-sensitive-sample.png` contains only reserved example data. The ignored Windows adapter test exercises the installed OCR language pack and expects email, private-IP, and assigned-secret detections:
 
 ```bash
-cargo test -p veilsend windows_ocr::tests::recognizes_the_synthetic_acceptance_fixture -- --ignored
+cargo test --locked -p veilsend windows_ocr::tests::recognizes_the_synthetic_acceptance_fixture -- --ignored
 ```
 
 `fixtures/qr-sensitive-sample.png` contains a synthetic link under the reserved `example.com` domain. Regenerate it and run the QR core acceptance tests with:
 
 ```bash
 cargo run -p veilsend-core --example make_qr_fixture
-cargo test -p veilsend-core qr::tests
+cargo test --locked -p veilsend-core qr::tests
 ```
 
 `fixtures/barcode-sensitive-sample.png` contains three reserved synthetic values: `SGTEST-000001`, the test EAN-13 value `5901234123457`, and the test UPC-A value `036000291452`. Regeneration is deterministic:
 
 ```bash
 cargo run -p veilsend-core --example make_barcode_fixture
-cargo test -p veilsend-core barcode::tests
+cargo test --locked -p veilsend-core barcode::tests
 ```
 
 `fixtures/synthetic-face-source.png` is a clearly synthetic 3D clay mannequin generated on 2026-08-19 with OpenAI's built-in image generation tool. It represents no real person and contains no private data. Its SHA-256 is `c243801fda58b63cc987ba19ab9c51a67fe452b4eab6804ef28cd0d1442f6abe`. The generation prompt requested one fictional, front-facing, non-photorealistic terracotta mannequin on a plain warm background, with no text, numbers, logos, watermark, jewelry, patterned clothing, real-person photography, or celebrity resemblance.
@@ -90,7 +134,7 @@ The deterministic compositor places the barcode fixture beside that portrait:
 ```bash
 cargo run -p veilsend-core --example make_barcode_fixture
 cargo run -p veilsend-core --example make_visual_fixture
-cargo test -p veilsend windows_faces::tests::recognizes_the_synthetic_acceptance_fixture -- --ignored
+cargo test --locked -p veilsend windows_faces::tests::recognizes_the_synthetic_acceptance_fixture -- --ignored
 ```
 
 The resulting `fixtures/visual-sensitive-sample.png` is the packaged clipboard acceptance fixture. Copy it to the Windows clipboard, open image mode, press `Ctrl+V`, confirm one face and three barcode findings without payload content, redact all, save a separate PNG, and require all five saved-file checks to complete with zero unexpected findings. Confirm the fixture hash is unchanged and that no temporary source image was created.
@@ -111,12 +155,12 @@ cargo run -p veilsend-core --example make_pdf_fixture
 Expected SHA-256 values:
 
 - `fixtures/pdf-sensitive-sample.pdf`: `fff96e09d22791ac0c4f56f8925409891b90b8d41540db6f85b2e3c461a7ee1e`
-- `fixtures/pdf-sensitive-attachment.txt`: `c7f94c54296fdc83d2d595189356d2079e5911fca6738ad2f1b1b87a0df98cc3`
+- `fixtures/pdf-sensitive-attachment.txt`: `ea250860e548c1fa7b6662dab6e47d85037475ce0d7b9847d462e46f2640dbb2` (canonical LF bytes; `.gitattributes` preserves LF on Windows checkouts)
 
 Run the complete object-removal, page-rendering, redaction, and saved-page verification test:
 
 ```bash
-cargo test -p veilsend pdf_pipeline::tests::fixture_reconstruction_omits_hidden_and_active_source_objects -- --nocapture
+cargo test --locked -p veilsend pdf_pipeline::tests::fixture_reconstruction_omits_hidden_and_active_source_objects -- --nocapture
 ```
 
 For manual packaged acceptance, choose the fixture in PDF mode, confirm the expected counts, add a cover around the page 3 marker, keep no automatic finding, save a separate `.redacted.pdf`, and require all pages and detectors to pass. Render source and final pages only under `tmp/pdfs/`, remove those temporary renders after inspection, and keep the final PDF under `output/pdf/`. Confirm the source hash remains unchanged and the output bytes contain none of `SG_PDF_SOURCE_MARKER`, `SG_PDF_INVISIBLE_MARKER`, `SG_PDF_METADATA_MARKER`, `SG_PDF_JAVASCRIPT_MARKER`, `SG_PDF_FORM_MARKER`, `SG_PDF_ATTACHMENT_MARKER`, or `SG_PDF_ANNOTATION_MARKER`.
