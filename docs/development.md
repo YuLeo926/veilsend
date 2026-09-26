@@ -22,7 +22,7 @@ For the final offline executable, use `npm run tauri -- build --no-bundle -- --l
 
 The last check compiles the Windows desktop shell and therefore requires local endpoint security to allow Cargo-generated build scripts. Do not disable endpoint security automatically. If an organization blocks `target/**/build-script-build.exe`, ask its administrator to approve the Rust/Tauri build workflow or build in an approved development environment.
 
-`cargo audit` currently exits successfully with no vulnerability advisories. It also reports maintenance warnings for GTK3-era crates retained in Tauri's cross-platform dependency graph; the Windows target does not compile or link those Linux GTK dependencies. Re-evaluate the warnings before shipping a Linux build.
+The 2026-09-26 `cargo audit` check exited successfully with no vulnerability advisories, but seven maintenance warnings remain. Two cross-platform dependencies are absent from the Windows x64 graph; five unmaintained Unicode dependencies through `urlpattern -> tauri-utils` do affect the Windows build/runtime graph. See the current [dependency audit warning inventory](release.md#dependency-audit-warning-tracking) for package names, advisory IDs and follow-up. Reassess all warnings before publication, not only before a Linux build; do not add audit ignore flags or describe the audit as warning-free.
 
 ## Hosted quality gate
 

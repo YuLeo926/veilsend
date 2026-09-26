@@ -72,6 +72,17 @@ test("accepts a complete synthetic record with exactly seventeen passes", () => 
   assert.doesNotThrow(() => assertAcceptanceRecord(validRecord()));
 });
 
+test("durable release checklist maps every required acceptance result without claiming passes", () => {
+  const runbook = readFileSync(new URL("../docs/release.md", import.meta.url), "utf8");
+  const rows = [...runbook.matchAll(/^\| `([^`]+)` \|/gm)].map((match) => match[1]);
+  assert.deepEqual(rows, requiredResults);
+  assert.match(runbook, /not recorded passes/);
+  assert.match(runbook, /before and after testing/);
+  assert.match(runbook, /pre-test inventory/);
+  assert.match(runbook, /pre\/post-uninstall hashes/);
+  assert.match(runbook, /unsupported\/mismatched or forged extensions/);
+});
+
 test("rejects non-records and non-plain nested objects", () => {
   for (const value of [null, [], "record", 1, new Date()]) {
     assert.throws(() => assertAcceptanceRecord(value));
@@ -199,6 +210,62 @@ test("CLI reads one JSON file and fails closed without echoing its path", () => 
     invalid.results.savedPdfDetectors = "needsReview";
     writeFileSync(file, JSON.stringify(invalid));
     assert.notEqual(run(file).status, 0);
+  } finally {
+    rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test("CLI rejects duplicate JSON members before they can hide content or incomplete checks", () => {
+  const temp = mkdtempSync(join(tmpdir(), "veilsend-duplicate-test-"));
+  const file = join(temp, "private-record.json");
+  const script = fileURLToPath(new URL("./acceptance-contract.mjs", import.meta.url));
+  const canonical = JSON.stringify(validRecord());
+  const cases = [
+    canonical.replace('{', '{"results":{"sourcePath":"C:\\\\private\\\\secret.pdf","savedPdfDetectors":"needsReview"},'),
+    canonical.replace('{', '{"res\\u0075lts":{"ocrText":"PRIVATE_SENTINEL"},'),
+    canonical.replace('"signed":false', '"signed":true,"signed":false'),
+    canonical.replace('"savedPdfDetectors":"pass"', '"savedPdfDetectors":"needsReview","savedPdfDetectors":"pass"'),
+    canonical.replace('"savedPdfDetectors":"pass"', '"savedPdfDetectors":"needsReview","savedPdfDetector\\u0073":"pass"'),
+    canonical.replace('"syntheticFace":', '"syntheticFace":"PRIVATE_SENTINEL","syntheticFace":'),
+    canonical.replace('{', '{"results":{"hidden":[{"x":"PRIVATE_SENTINEL","\\u0078":null}]},'),
+    canonical.replace('{', '{"results":{"hidden":{"deeper":{"x":1,"x":2}}},'),
+  ];
+  try {
+    for (const raw of cases) {
+      // Every attack otherwise becomes an accepted object under lossy JSON.parse.
+      assert.doesNotThrow(() => assertAcceptanceRecord(JSON.parse(raw)));
+      writeFileSync(file, raw);
+      const result = spawnSync(process.execPath, [script, file], { encoding: "utf8" });
+      assert.equal(result.status, 1, "raw duplicate members must fail closed");
+      assert.equal(result.stdout, "");
+      assert.equal(result.stderr, "Could not read acceptance JSON\n");
+    }
+    // Do not rely on an outer duplicate to reject these deeper objects/arrays.
+    for (const nested of [
+      '{"hidden":{"deeper":{"x":1,"x":2}}}',
+      '{"hidden":[{"x":1,"\\u0078":2}]}',
+      '{"hidden":{"quote\\\"\\\\{}":1,"quote\\\"\\\\{}":2}}',
+    ]) {
+      const raw = canonical.replace('"results":', `"extra":${nested},"results":`);
+      assert.doesNotThrow(() => JSON.parse(raw), "nested duplicate fixture must otherwise be valid JSON");
+      writeFileSync(file, raw);
+      const result = spawnSync(process.execPath, [script, file], { encoding: "utf8" });
+      assert.equal(result.status, 1);
+      assert.equal(result.stdout, "");
+      assert.equal(result.stderr, "Could not read acceptance JSON\n", "duplicates must be rejected before object validation");
+    }
+    // Repeated names in separate objects and punctuation inside values are not duplicates.
+    writeFileSync(file, canonical.replace('"results":', '"extra":{"a":{"x":1},"b":{"x":"\\\"{}[]:"}},"results":'));
+    const extraFields = spawnSync(process.execPath, [script, file], { encoding: "utf8" });
+    assert.equal(extraFields.status, 1);
+    assert.equal(extraFields.stderr, "Acceptance record failed validation\n");
+    // Ordinary whitespace, reordered keys and unique escaped keys remain valid.
+    const formatted = JSON.stringify(Object.fromEntries(Object.entries(validRecord()).reverse()), null, 2)
+      .replace('"results"', '"res\\u0075lts"');
+    writeFileSync(file, formatted);
+    const result = spawnSync(process.execPath, [script, file], { encoding: "utf8" });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, "Acceptance record valid\n");
   } finally {
     rmSync(temp, { recursive: true, force: true });
   }

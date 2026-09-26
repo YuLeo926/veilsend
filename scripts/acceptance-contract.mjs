@@ -46,6 +46,31 @@ function isCanonicalTimestamp(value) {
   return Number.isFinite(time) && new Date(time).toISOString() === value;
 }
 
+function parseUniqueMemberJson(text) {
+  // Scan raw strings and container boundaries before JSON.parse can discard a
+  // duplicate. Escaped quotes/braces stay within strings; decoded key names
+  // make literal and Unicode-escaped spellings equivalent. Each object owns its
+  // own key set, including objects inside arrays or later-overwritten members.
+  const containers = [];
+  const tokens = /"(?:[^"\\]|\\[\s\S])*"|[{}[\]]/g;
+  for (const match of text.matchAll(tokens)) {
+    const token = match[0];
+    if (token === "{") containers.push(new Set());
+    else if (token === "[") containers.push(null);
+    else if (token === "}" || token === "]") containers.pop();
+    else if (containers.at(-1) instanceof Set &&
+        /^[ \t\r\n]*:/.test(text.slice(match.index + token.length))) {
+      const key = JSON.parse(token);
+      const keys = containers.at(-1);
+      if (keys.has(key)) throw new Error("Acceptance JSON has duplicate members");
+      keys.add(key);
+    }
+  }
+  // JSON.parse remains the authority for the full JSON grammar; the scanner
+  // does not make malformed JSON acceptable or echo input in CLI errors.
+  return JSON.parse(text);
+}
+
 export function assertAcceptanceRecord(record) {
   assertExactObject(record, topLevel);
   assertExactObject(record.fixtureHashes, Object.keys(fixtureHashes));
@@ -83,7 +108,7 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
   } else {
     let record;
     try {
-      record = JSON.parse(readFileSync(process.argv[2], "utf8"));
+      record = parseUniqueMemberJson(readFileSync(process.argv[2], "utf8"));
     } catch {
       process.stderr.write("Could not read acceptance JSON\n");
       process.exitCode = 1;

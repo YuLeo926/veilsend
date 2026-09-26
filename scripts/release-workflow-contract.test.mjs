@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import test from "node:test";
@@ -6,6 +7,61 @@ import test from "node:test";
 const root = resolve(import.meta.dirname, "..");
 const workflowPath = resolve(root, ".github", "workflows", "release.yml");
 const ciWorkflowPath = resolve(root, ".github", "workflows", "ci.yml");
+
+const releaseGates = [
+  "npm run test:release", "npm run check:licenses", "npm test", "npm run build",
+  "cargo fmt --all -- --check",
+  "cargo clippy --locked --workspace --all-targets --all-features -- -D warnings",
+  "cargo test --locked --workspace --all-features", "npm audit --audit-level=high",
+  "cargo install cargo-audit --version 0.22.2 --locked", "cargo audit",
+];
+
+function releaseGateScript() {
+  const workflow = readFileSync(workflowPath, "utf8");
+  const match = /      - name: Run release gates\r?\n        shell: pwsh\r?\n        run: \|\r?\n((?:          [^\n]*\n)+)/.exec(workflow);
+  assert.ok(match, "the release gate script must be available for behavioral testing");
+  return match[1].replace(/^          /gm, "");
+}
+
+test("every release gate explicitly stops on native failure before packaging", () => {
+  const script = releaseGateScript();
+  const lines = script.trim().split(/\r?\n/);
+  assert.deepEqual(lines.filter((line) => /^(?:npm|cargo) /.test(line)), releaseGates);
+  for (const command of releaseGates) {
+    const next = lines[lines.indexOf(command) + 1];
+    assert.match(next ?? "", /^if \(\$LASTEXITCODE -ne 0\) \{ throw '[^']+' \}$/, command);
+  }
+  const workflow = readFileSync(workflowPath, "utf8");
+  assert.ok(workflow.indexOf("Run release gates") < workflow.indexOf("Build NSIS and portable executable"));
+  assert.doesNotMatch(workflow, /continue-on-error:|if:.*(?:always\(|failure\()/);
+  assert.match(workflow, /rustup toolchain install stable --profile minimal --component rustfmt,clippy\r?\n\s+if \(\$LASTEXITCODE -ne 0\) \{ throw/);
+  assert.match(workflow, /rustup default stable\r?\n\s+if \(\$LASTEXITCODE -ne 0\) \{ throw/);
+});
+
+test("PowerShell gate block prevents all later work after any native command fails", {
+  skip: process.platform !== "win32" ? "Windows PowerShell release behavior requires Windows" : false,
+}, () => {
+  const original = releaseGateScript();
+  for (let failedGate = 0; failedGate <= releaseGates.length; failedGate++) {
+    let gate = 0;
+    const script = original.split(/\r?\n/).map((line) => {
+      if (!releaseGates.includes(line)) return line;
+      const index = gate++;
+      const exitCode = index === failedGate ? 17 : 0;
+      return `& '${process.execPath.replaceAll("'", "''")}' -e 'console.log("gate:${index}"); process.exit(${exitCode})'`;
+    }).join("\n");
+    assert.equal(gate, releaseGates.length);
+    // Model the GitHub wrapper without relying on native-error preference defaults.
+    const wrapped = `$ErrorActionPreference = 'Stop'\n$PSNativeCommandUseErrorActionPreference = $false\n${script}\nWrite-Output 'later-release-work'\nexit $LASTEXITCODE`;
+    const result = spawnSync("pwsh", ["-NoProfile", "-NonInteractive", "-Command", wrapped], { encoding: "utf8", timeout: 20_000 });
+    assert.ifError(result.error);
+    const succeeds = failedGate === releaseGates.length;
+    assert.equal(result.status === 0, succeeds, `failure at gate ${failedGate} must stop release work`);
+    const expected = releaseGates.slice(0, succeeds ? releaseGates.length : failedGate + 1).map((_, index) => `gate:${index}`);
+    if (succeeds) expected.push("later-release-work");
+    assert.deepEqual(result.stdout.trim().split(/\r?\n/), expected);
+  }
+});
 
 // Offline allowlist of verified commit objects. Do not substitute tag-object SHAs.
 const verifiedActionCommitPins = Object.freeze([

@@ -83,22 +83,34 @@ jobs:
         shell: pwsh
         run: |
           rustup toolchain install stable --profile minimal --component rustfmt,clippy
+          if ($LASTEXITCODE -ne 0) { throw 'Rust toolchain installation failed.' }
           rustup default stable
+          if ($LASTEXITCODE -ne 0) { throw 'Rust toolchain selection failed.' }
       - name: Install dependencies
         run: npm ci
       - name: Run release gates
         shell: pwsh
         run: |
           npm run test:release
+          if ($LASTEXITCODE -ne 0) { throw 'Release contract tests failed.' }
           npm run check:licenses
+          if ($LASTEXITCODE -ne 0) { throw 'License check failed.' }
           npm test
+          if ($LASTEXITCODE -ne 0) { throw 'Frontend tests failed.' }
           npm run build
+          if ($LASTEXITCODE -ne 0) { throw 'Frontend build failed.' }
           cargo fmt --all -- --check
+          if ($LASTEXITCODE -ne 0) { throw 'Rust formatting check failed.' }
           cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+          if ($LASTEXITCODE -ne 0) { throw 'Rust lint check failed.' }
           cargo test --locked --workspace --all-features
+          if ($LASTEXITCODE -ne 0) { throw 'Rust tests failed.' }
           npm audit --audit-level=high
+          if ($LASTEXITCODE -ne 0) { throw 'npm audit failed.' }
           cargo install cargo-audit --version 0.22.2 --locked
+          if ($LASTEXITCODE -ne 0) { throw 'Cargo audit installation failed.' }
           cargo audit
+          if ($LASTEXITCODE -ne 0) { throw 'Cargo audit failed.' }
       - name: Build NSIS and portable executable
         run: npm run tauri -- build -- --locked
       - name: Stage unsigned beta assets
