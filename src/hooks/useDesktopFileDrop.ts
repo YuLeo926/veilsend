@@ -16,6 +16,7 @@ export function useDesktopFileDrop(options: DesktopFileDropOptions): void {
   const latest = useRef(options);
   latest.current = options;
   const registration = useRef<Promise<void>>(Promise.resolve());
+  const inFlight = useRef<symbol | null>(null);
 
   useEffect(() => {
     if (!options.enabled || !isDesktop()) return;
@@ -39,16 +40,26 @@ export function useDesktopFileDrop(options: DesktopFileDropOptions): void {
             return;
           }
           current.onActive(false);
-          const decision = classifyFileDrop(payload.paths, current.kind, current.busy);
+          const decision = classifyFileDrop(payload.paths, current.kind, current.busy || inFlight.current !== null);
           if (!decision.ok) {
             current.onError(decision.message);
             return;
           }
+          const operation = Symbol("file drop");
+          inFlight.current = operation;
+          const release = () => {
+            if (inFlight.current === operation) inFlight.current = null;
+          };
           try {
-            void Promise.resolve(current.onDrop(decision.path)).catch(() => {
-              if (!disposed) latest.current.onError("Could not open dropped file.");
-            });
+            void Promise.resolve(current.onDrop(decision.path)).then(
+              release,
+              () => {
+                release();
+                if (!disposed) latest.current.onError("Could not open dropped file.");
+              },
+            );
           } catch {
+            release();
             if (!disposed) latest.current.onError("Could not open dropped file.");
           }
         });

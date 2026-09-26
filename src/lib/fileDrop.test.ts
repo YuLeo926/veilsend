@@ -91,6 +91,57 @@ describe("single file drop", () => {
 });
 
 describe("desktop drop listener", () => {
+  it("rejects back-to-back valid drops until the first loader settles", async () => {
+    const pending = deferred<void>();
+    const onDrop = vi.fn().mockReturnValueOnce(pending.promise).mockResolvedValue(undefined);
+    const onError = vi.fn();
+    await render(props({ onDrop, onError }));
+    await act(async () => {
+      listeners[0]({ payload: { type: "drop", paths: ["first.png"] } });
+      listeners[0]({ payload: { type: "drop", paths: ["second.png"] } });
+    });
+    expect(onDrop).toHaveBeenCalledExactlyOnceWith("first.png");
+    expect(onError).toHaveBeenCalledExactlyOnceWith("Wait for the current operation to finish.");
+
+    await act(async () => { pending.resolve(); });
+    await act(async () => { listeners[0]({ payload: { type: "drop", paths: ["third.png"] } }); });
+    expect(onDrop).toHaveBeenCalledTimes(2);
+    expect(onDrop).toHaveBeenLastCalledWith("third.png");
+  });
+
+  it("keeps the gate across disable/re-enable and releases it after the old loader settles", async () => {
+    const pending = deferred<void>();
+    const onDrop = vi.fn().mockReturnValueOnce(pending.promise).mockResolvedValue(undefined);
+    const onError = vi.fn();
+    await render(props({ onDrop, onError }));
+    await act(async () => { listeners[0]({ payload: { type: "drop", paths: ["first.png"] } }); });
+    await render(props({ enabled: false, onDrop, onError }));
+    await render(props({ onDrop, onError }));
+    expect(native.listen).toHaveBeenCalledTimes(2);
+    await act(async () => { listeners[1]({ payload: { type: "drop", paths: ["second.png"] } }); });
+    expect(onDrop).toHaveBeenCalledTimes(1);
+    expect(onError).toHaveBeenCalledWith("Wait for the current operation to finish.");
+
+    await act(async () => { pending.resolve(); });
+    await act(async () => { listeners[1]({ payload: { type: "drop", paths: ["third.png"] } }); });
+    expect(onDrop).toHaveBeenCalledTimes(2);
+    expect(onDrop).toHaveBeenLastCalledWith("third.png");
+  });
+
+  it("releases the gate after loader rejection without exposing its error", async () => {
+    const pending = deferred<void>();
+    const onDrop = vi.fn().mockReturnValueOnce(pending.promise).mockResolvedValue(undefined);
+    const onError = vi.fn();
+    await render(props({ onDrop, onError }));
+    await act(async () => { listeners[0]({ payload: { type: "drop", paths: ["first.png"] } }); });
+    await act(async () => { pending.reject(new Error("C:\\private\\loader")); });
+    expect(onError).toHaveBeenCalledWith("Could not open dropped file.");
+    expect(JSON.stringify(onError.mock.calls)).not.toContain("private");
+    await act(async () => { listeners[0]({ payload: { type: "drop", paths: ["second.png"] } }); });
+    expect(onDrop).toHaveBeenCalledTimes(2);
+    expect(onDrop).toHaveBeenLastCalledWith("second.png");
+  });
+
   it("uses one listener and current props; only a valid drop calls the loader", async () => {
     const first = props();
     await render(first);
