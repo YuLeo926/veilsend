@@ -24,9 +24,24 @@ export function clampPdfPage(current: number, pageCount: number, delta: -1 | 1):
 }
 
 export function isEditableTarget(target: EventTarget | null): boolean {
-  const candidate = target as { tagName?: unknown; isContentEditable?: unknown } | null;
+  const candidate = target as { tagName?: unknown; isContentEditable?: unknown; closest?: Element["closest"] } | null;
   return Boolean(candidate && (candidate.isContentEditable === true
+    || candidate.closest?.('[contenteditable]:not([contenteditable="false"])')
     || (typeof candidate.tagName === "string" && /^(INPUT|TEXTAREA|SELECT)$/.test(candidate.tagName))));
+}
+
+export function pdfShortcutAction(
+  event: { key: string; target: EventTarget | null; ctrlKey?: boolean; metaKey?: boolean; altKey?: boolean },
+  stage: "add" | "review" | "result",
+  busy: boolean,
+) {
+  if (stage !== "review" || busy || event.ctrlKey || event.metaKey || event.altKey || isEditableTarget(event.target)) return null;
+  if (event.key === "PageDown") return "nextPage" as const;
+  if (event.key === "PageUp") return "previousPage" as const;
+  if (event.key === "+" || event.key === "=") return "zoomIn" as const;
+  if (event.key === "-") return "zoomOut" as const;
+  if (event.key === "Escape") return "cancelDraft" as const;
+  return null;
 }
 
 export function imageRectPercentStyle(rect: ImageRect, pageWidth: number, pageHeight: number): {

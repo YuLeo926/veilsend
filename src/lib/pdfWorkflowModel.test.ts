@@ -8,6 +8,7 @@ import {
   isEditableTarget,
   normalizedRectangleFromPoints,
   pageChecksComplete,
+  pdfShortcutAction,
   remainingPdfRiskCount,
   resizeNormalizedRectangle,
   stepPdfZoom,
@@ -68,6 +69,22 @@ const session = {
 } satisfies PdfSession;
 
 describe("PDF workflow model", () => {
+  it("maps review shortcuts without taking editable, modified, busy, or other-stage keys", () => {
+    const button = { tagName: "BUTTON", isContentEditable: false } as unknown as EventTarget;
+    const input = { tagName: "INPUT", isContentEditable: false } as unknown as EventTarget;
+    for (const [key, action] of Object.entries({ PageDown: "nextPage", PageUp: "previousPage", "+": "zoomIn", "=": "zoomIn", "-": "zoomOut", Escape: "cancelDraft" })) {
+      expect(pdfShortcutAction({ key, target: button }, "review", false)).toBe(action);
+      expect(pdfShortcutAction({ key, target: input }, "review", false)).toBe(null);
+      expect(pdfShortcutAction({ key, target: button }, "add", false)).toBe(null);
+      expect(pdfShortcutAction({ key, target: button }, "result", false)).toBe(null);
+      expect(pdfShortcutAction({ key, target: button }, "review", true)).toBe(null);
+      for (const modifier of ["ctrlKey", "metaKey", "altKey"]) {
+        expect(pdfShortcutAction({ key, target: button, [modifier]: true }, "review", false)).toBe(null);
+      }
+    }
+    expect(pdfShortcutAction({ key: "Tab", target: button }, "review", false)).toBe(null);
+  });
+
   it("steps zoom inside the 50-200 range and treats fit modes as 100%", () => {
     expect(stepPdfZoom(50, -1)).toBe(50);
     expect(stepPdfZoom(100, 1)).toBe(125);

@@ -12,7 +12,9 @@ import {
   Layers3,
   LoaderCircle,
   LockKeyhole,
+  Minus,
   MousePointer2,
+  Plus,
   QrCode,
   RefreshCcw,
   ScanFace,
@@ -35,11 +37,16 @@ import {
   buildPdfDefaultDecisions,
   buildPdfFindings,
   buildPdfPageFindings,
+  clampPdfPage,
+  imageRectPercentStyle,
   normalizedRectangleFromPoints,
   pageChecksComplete,
+  pdfShortcutAction,
   remainingPdfRiskCount,
   resizeNormalizedRectangle,
+  stepPdfZoom,
   type PdfFindingKind,
+  type PdfZoom,
 } from "../lib/pdfWorkflowModel";
 import { derivePdfDiagnostics, type DiagnosticErrorCode, type WorkflowDiagnostics } from "../lib/diagnostics";
 import { pdfVerificationReceipt } from "../lib/verificationReceipt";
@@ -182,6 +189,9 @@ export function PdfWorkflow({
   const manualRegions = manualEdits.regions;
   const manualHistory = manualEdits.history;
   const [selectedPage, setSelectedPage] = useState(0);
+  const [zoom, setZoom] = useState<PdfZoom>("fitWidth");
+  const canvasRef = useRef<HTMLDivElement>(null);
+  const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
   const [preview, setPreview] = useState<PdfPagePreview | null>(null);
   const [previewBusy, setPreviewBusy] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -243,6 +253,51 @@ export function PdfWorkflow({
   const exceptions = allFindings.length - selectedFindings;
 
   useEffect(() => {
+    const canvas = canvasRef.current;
+    if (stage !== "review" || !canvas) return;
+    // ResizeObserver's content box excludes padding: both fit modes use the
+    // space actually available inside the scrollport, not the window width.
+    const measure = () => {
+      const style = getComputedStyle(canvas);
+      setCanvasSize({
+        width: Math.max(0, canvas.clientWidth - parseFloat(style.paddingLeft || "0") - parseFloat(style.paddingRight || "0")),
+        height: Math.max(0, canvas.clientHeight - parseFloat(style.paddingTop || "0") - parseFloat(style.paddingBottom || "0")),
+      });
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", measure);
+      return () => window.removeEventListener("resize", measure);
+    }
+    const observer = new ResizeObserver(([entry]) => {
+      setCanvasSize({ width: entry.contentRect.width, height: entry.contentRect.height });
+    });
+    observer.observe(canvas);
+    return () => observer.disconnect();
+  }, [stage, session]);
+
+  useEffect(() => {
+    if (stage !== "review" || busy || !session) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      // TrustCenter owns its keys even before focus moves into the dialog.
+      if (event.defaultPrevented || document.querySelector('[role="dialog"][aria-modal="true"], dialog[open]')) return;
+      const action = pdfShortcutAction(event, currentStage.current, operationState.current !== "idle");
+      if (!action) return;
+      event.preventDefault();
+      if (action === "nextPage" || action === "previousPage") {
+        setDraft(null);
+        setResizeDraft(null);
+        setSelectedPage((page) => clampPdfPage(page, session.pageCount, action === "nextPage" ? 1 : -1));
+      }
+      if (action === "zoomIn") setZoom((value) => stepPdfZoom(value, 1));
+      if (action === "zoomOut") setZoom((value) => stepPdfZoom(value, -1));
+      if (action === "cancelDraft") setDraft(null);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [busy, session, stage]);
+
+  useEffect(() => {
     if (!session || stage !== "review") return;
     let active = true;
     setPreviewBusy(true);
@@ -270,6 +325,7 @@ export function PdfWorkflow({
     setDrawMode(false);
     setResult(null);
     setSelectedPage(0);
+    setZoom("fitWidth");
   }, []);
 
   async function clearCurrentSession(token: number) {
@@ -526,6 +582,11 @@ export function PdfWorkflow({
   }
 
   if (stage === "review" && session && currentPage) {
+    const pageWidth = preview?.pageIndex === selectedPage ? preview.width : currentPage.widthPixels;
+    const pageHeight = preview?.pageIndex === selectedPage ? preview.height : currentPage.heightPixels;
+    const scaledWidth = typeof zoom === "number" ? pageWidth * zoom / 100
+      : zoom === "fitPage" ? Math.min(canvasSize.width, canvasSize.height * pageWidth / pageHeight)
+      : canvasSize.width;
     const displayedPreview = preview?.pageIndex === selectedPage
       ? preview.previewDataUrl
       : currentPage.thumbnailDataUrl;
@@ -568,7 +629,7 @@ export function PdfWorkflow({
                     type="button"
                     disabled={busy}
                     key={page.pageIndex}
-                    onClick={() => { setSelectedPage(page.pageIndex); setDraft(null); }}
+                    onClick={() => { setSelectedPage(page.pageIndex); setDraft(null); setResizeDraft(null); }}
                     aria-label={`Open page ${page.pageIndex + 1}`}
                   >
                     <span className="pdf-thumb-paper"><img src={page.thumbnailDataUrl} alt="" /></span>
@@ -593,9 +654,17 @@ export function PdfWorkflow({
                 <MousePointer2 size={15} /> {drawMode ? "Drawing covers" : "Add manual cover"}
               </button>
             </div>
-            <div className={`pdf-canvas ${drawMode && !busy ? "drawing" : ""}`}>
+            <div className="pdf-zoom-toolbar" role="group" aria-label="PDF zoom controls">
+              <button type="button" aria-label="Fit width" aria-pressed={zoom === "fitWidth"} disabled={busy} onClick={() => setZoom("fitWidth")}>Fit width</button>
+              <button type="button" aria-label="Fit page" aria-pressed={zoom === "fitPage"} disabled={busy} onClick={() => setZoom("fitPage")}>Fit page</button>
+              <span className="pdf-zoom-spacer" />
+              <button type="button" aria-label="Zoom out" disabled={busy || zoom === 50} onClick={() => setZoom((value) => stepPdfZoom(value, -1))}><Minus size={14} /></button>
+              <output aria-label="Current PDF zoom" aria-live="polite">{typeof zoom === "number" ? `${zoom}%` : zoom === "fitWidth" ? "Fit width" : "Fit page"}</output>
+              <button type="button" aria-label="Zoom in" disabled={busy || zoom === 200} onClick={() => setZoom((value) => stepPdfZoom(value, 1))}><Plus size={14} /></button>
+            </div>
+            <div ref={canvasRef} className={`pdf-canvas ${drawMode && !busy ? "drawing" : ""}`} tabIndex={0} role="region" aria-label="PDF page preview">
               {previewBusy && <div className="pdf-preview-loading"><LoaderCircle className="spin" size={21} /> Rendering page locally…</div>}
-              <div className="pdf-page-wrap">
+              <div className={`pdf-page-wrap ${zoom === "fitWidth" ? "zoom-fit-width" : zoom === "fitPage" ? "zoom-fit-page" : "zoom-percent"}`} style={{ width: scaledWidth > 0 ? scaledWidth : undefined, aspectRatio: `${pageWidth} / ${pageHeight}` }}>
                 <img src={displayedPreview} alt={`PDF page ${selectedPage + 1}`} draggable={false} />
                 <div
                   className="pdf-draw-layer"
@@ -608,12 +677,7 @@ export function PdfWorkflow({
                     <span
                       className={`redaction-region ${finding.kind}-region ${decisions[finding.id]?.enabled === false ? "excluded" : "selected"}`}
                       key={`${finding.id}-${rectangleIndex}`}
-                      style={{
-                        left: `${(rect.x / currentPage.widthPixels) * 100}%`,
-                        top: `${(rect.y / currentPage.heightPixels) * 100}%`,
-                        width: `${(rect.width / currentPage.widthPixels) * 100}%`,
-                        height: `${(rect.height / currentPage.heightPixels) * 100}%`,
-                      }}
+                      style={imageRectPercentStyle(rect, currentPage.widthPixels, currentPage.heightPixels)}
                     ><b>{findingIndex + 1}</b></span>
                   )))}
                   {currentManual.map((region, index) => (
