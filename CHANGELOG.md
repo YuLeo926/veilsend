@@ -1,8 +1,8 @@
 # Changelog
 
-## 0.2.0-beta.1 — candidate
+## 0.2.0-beta.1 — experimental Beta
 
-This is the candidate scope for an unsigned Windows beta, not evidence that a public download or clean-Windows acceptance has completed. Publication requires the gates in [the release runbook](docs/release.md).
+Unsigned Windows experimental pre-release with limited development-host smoke testing, not clean-Windows acceptance. See the [actual validation scope](docs/releases/v0.2.0-beta.1-experimental.md) and the explicitly approved experimental path in [the release runbook](docs/release.md).
 
 ### Added
 
@@ -15,6 +15,7 @@ This is the candidate scope for an unsigned Windows beta, not evidence that a pu
 
 ### Known limitations
 
+- Clean-system compatibility, portable runtime, uninstall preservation, disconnected-network operation, and the complete manual acceptance matrix remain unverified for this release.
 - The beta is unsigned; Microsoft SmartScreen may warn. A warning is not proof of authenticity. Check the published SHA-256 and GitHub provenance before running a release asset.
 - Windows 10/11 x64 only. The current-user installer may need a network connection to bootstrap Microsoft's WebView2 runtime if it is missing; processing works offline after installation.
 - No Office files, batch processing, auto-updater, or encrypted PDF support.
