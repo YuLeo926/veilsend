@@ -30,7 +30,7 @@ import {
 } from "lucide-react";
 import { ImageWorkflow, type ImageWorkflowHandle } from "./components/ImageWorkflow";
 import { InputModeTabs, type InputMode } from "./components/InputModeTabs";
-import { PdfWorkflow } from "./components/PdfWorkflow";
+import { PdfWorkflow, type PdfWorkflowHandle } from "./components/PdfWorkflow";
 import { TrustCenter, type TrustRuntimeState } from "./components/TrustCenter";
 import { VerificationReceipt } from "./components/VerificationReceipt";
 import { getRuntimeInfo, isDesktop, sanitizeText, saveCleanedText, scanText } from "./lib/bridge";
@@ -210,6 +210,7 @@ function App() {
   const [result, setResult] = useState<TextCleanResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [imageBusy, setImageBusy] = useState(false);
+  const [pdfBusy, setPdfBusy] = useState(false);
   const [error, setError] = useState("");
   const [dropActive, setDropActive] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -226,6 +227,7 @@ function App() {
   const textOperationPending = useRef(false);
   const currentMode = useRef<InputMode>("text");
   const imageWorkflow = useRef<ImageWorkflowHandle>(null);
+  const pdfWorkflow = useRef<PdfWorkflowHandle>(null);
 
   const options: ScanOptions = useMemo(() => ({
     maxBytes: MAX_BYTES,
@@ -400,6 +402,10 @@ function App() {
   }
 
   function reset() {
+    if (currentMode.current === "pdf") {
+      void pdfWorkflow.current?.leave(resetToText);
+      return;
+    }
     if (currentMode.current === "image") {
       void imageWorkflow.current?.leave(resetToText);
       return;
@@ -423,6 +429,10 @@ function App() {
   }
 
   function switchMode(nextMode: InputMode) {
+    if (currentMode.current === "pdf") {
+      void pdfWorkflow.current?.leave(() => completeModeSwitch(nextMode));
+      return;
+    }
     if (currentMode.current === "image") {
       void imageWorkflow.current?.leave(() => completeModeSwitch(nextMode));
       return;
@@ -463,7 +473,7 @@ function App() {
     <div className="app-shell">
       <div className="paper-grain" aria-hidden="true" />
       <header className="app-header">
-        <button className="brand" type="button" disabled={imageBusy} onClick={reset} aria-label="Start a new VeilSend scan">
+        <button className="brand" type="button" disabled={imageBusy || pdfBusy} onClick={reset} aria-label="Start a new VeilSend scan">
           <span className="brand-mark"><ShieldCheck size={22} strokeWidth={2.3} /></span>
           <span><strong>VeilSend</strong><small>Outbound safety, on-device</small></span>
         </button>
@@ -724,10 +734,12 @@ function App() {
             <PdfWorkflow
               stage={stage}
               onStageChange={setStage}
-              onSwitchMode={switchMode}
+              onSwitchMode={completeModeSwitch}
               onError={setWorkflowError}
               onDiagnosticsChange={onWorkflowDiagnosticsChange}
               runtimeInfo={runtimeInfo}
+              navigationRef={pdfWorkflow}
+              onBusyChange={setPdfBusy}
             />
           )}
         </main>

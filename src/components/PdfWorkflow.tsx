@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useImperativeHandle, useMemo, useReducer, useRef, useState, type Ref } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import {
   AlertTriangle,
@@ -26,8 +26,11 @@ import {
   clearPdfSession,
   getPdfPagePreview,
   isDesktop,
+  openDroppedPdf,
   pickPdf,
 } from "../lib/bridge";
+import { useDesktopFileDrop } from "../hooks/useDesktopFileDrop";
+import { dropPrompt } from "../lib/fileDrop";
 import {
   buildPdfDefaultDecisions,
   buildPdfFindings,
@@ -54,6 +57,9 @@ import { InputModeTabs, type InputMode } from "./InputModeTabs";
 import { VerificationReceipt } from "./VerificationReceipt";
 
 type Stage = "add" | "review" | "result";
+export interface PdfWorkflowHandle {
+  leave: (onLeave: () => void) => Promise<void>;
+}
 type DrawDraft = { originX: number; originY: number; rectangle: NormalizedRect };
 type ResizeDraft = {
   id: string;
@@ -154,6 +160,8 @@ export function PdfWorkflow({
   onError,
   onDiagnosticsChange,
   runtimeInfo = null,
+  navigationRef,
+  onBusyChange,
 }: {
   stage: Stage;
   onStageChange: (stage: Stage) => void;
@@ -161,6 +169,8 @@ export function PdfWorkflow({
   onError: (message: string, code?: DiagnosticErrorCode) => void;
   onDiagnosticsChange: (next: WorkflowDiagnostics) => void;
   runtimeInfo?: RuntimeInfo | null;
+  navigationRef?: Ref<PdfWorkflowHandle>;
+  onBusyChange?: (busy: boolean) => void;
 }) {
   const [session, setSession] = useState<PdfSession | null>(null);
   const [result, setResult] = useState<CleanedPdfFile | null>(null);
@@ -175,10 +185,21 @@ export function PdfWorkflow({
   const [preview, setPreview] = useState<PdfPagePreview | null>(null);
   const [previewBusy, setPreviewBusy] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [dropActive, setDropActive] = useState(false);
+  const operationState = useRef<"idle" | "working" | "cleanup">("idle");
+  const currentStage = useRef(stage);
+  currentStage.current = stage;
   const [drawMode, setDrawMode] = useState(false);
   const [draft, setDraft] = useState<DrawDraft | null>(null);
   const [resizeDraft, setResizeDraft] = useState<ResizeDraft | null>(null);
   const operationGeneration = useRef(0);
+
+  useImperativeHandle(navigationRef, () => ({ leave: leaveWorkflow }));
+  const setOperationState = useCallback((next: "idle" | "working" | "cleanup") => {
+    operationState.current = next;
+    setBusy(next !== "idle");
+    onBusyChange?.(next !== "idle");
+  }, [onBusyChange]);
 
   useEffect(() => () => { operationGeneration.current += 1; }, []);
 
@@ -239,8 +260,7 @@ export function PdfWorkflow({
     return () => { active = false; };
   }, [onError, selectedPage, session, stage]);
 
-  async function clearCurrentSession() {
-    if (session) await clearPdfSession();
+  const resetSessionView = useCallback(() => {
     setSession(null);
     setPreview(null);
     setDecisions({});
@@ -248,34 +268,56 @@ export function PdfWorkflow({
     setDraft(null);
     setResizeDraft(null);
     setDrawMode(false);
+    setResult(null);
+    setSelectedPage(0);
+  }, []);
+
+  async function clearCurrentSession(token: number) {
+    if (session) await clearPdfSession();
+    if (operationGeneration.current === token) resetSessionView();
   }
 
-  async function choosePdf() {
+  const acceptPdfSession = useCallback((nextSession: PdfSession) => {
+    resetSessionView();
+    setSession(nextSession);
+    setDecisions(buildPdfDefaultDecisions(nextSession));
+    currentStage.current = "review";
+    onStageChange("review");
+  }, [onStageChange, resetSessionView]);
+
+  const acquirePdf = useCallback(async (load: () => Promise<PdfSession | null>) => {
+    if (!isDesktop() || currentStage.current !== "add" || operationState.current !== "idle") return;
     const token = ++operationGeneration.current;
-    setBusy(true);
+    setOperationState("working");
     onError("");
     try {
-      await clearCurrentSession();
-      const nextSession = await pickPdf();
+      // Native accepted loaders own replacement; picker cancellation is a no-op.
+      const nextSession = await load();
       if (operationGeneration.current !== token) return;
       if (!nextSession) return;
-      setSession(nextSession);
-      setDecisions(buildPdfDefaultDecisions(nextSession));
-      setSelectedPage(0);
-      setResult(null);
-      onStageChange("review");
-    } catch (error) {
+      acceptPdfSession(nextSession);
+    } catch {
       if (operationGeneration.current !== token) return;
-      onError(readableError(error), "inputRejected");
+      resetSessionView();
+      onStageChange("add");
+      onError("Could not open that PDF. Choose one supported PDF document.", "inputRejected");
     } finally {
-      if (operationGeneration.current === token) setBusy(false);
+      if (operationGeneration.current === token) setOperationState("idle");
     }
-  }
+  }, [acceptPdfSession, onError, onStageChange, resetSessionView, setOperationState]);
+
+  function choosePdf() { return acquirePdf(pickPdf); }
+  const dropPdf = useCallback((path: string) => acquirePdf(() => openDroppedPdf(path)), [acquirePdf]);
+  useDesktopFileDrop({
+    enabled: stage === "add" && isDesktop(), kind: "pdf", busy,
+    onDrop: dropPdf, onActive: setDropActive,
+    onError: (message) => onError(message, "inputRejected"),
+  });
 
   async function createSafetyCopy() {
-    if (!session || busy) return;
+    if (!session || operationState.current !== "idle") return;
     const token = ++operationGeneration.current;
-    setBusy(true);
+    setOperationState("working");
     setDraft(null);
     setResizeDraft(null);
     setDrawMode(false);
@@ -294,37 +336,47 @@ export function PdfWorkflow({
       if (operationGeneration.current !== token) return;
       onError(readableError(error), "workflowFailed");
     } finally {
-      if (operationGeneration.current === token) setBusy(false);
+      if (operationGeneration.current === token) setOperationState("idle");
     }
   }
 
   async function startAgain() {
+    if (operationState.current === "cleanup") return;
     const token = ++operationGeneration.current;
-    let clearError = "";
+    setOperationState("cleanup");
+    onStageChange("add");
     try {
-      await clearCurrentSession();
-    } catch (error) {
-      clearError = readableError(error);
-    } finally {
+      await clearCurrentSession(token);
+    } catch {
       if (operationGeneration.current !== token) return;
-      setResult(null);
-      onError(clearError, clearError ? "workflowFailed" : "none");
-      onStageChange("add");
+      onError("Could not clear the previous PDF session. Restart VeilSend before choosing another PDF.", "workflowFailed");
+      return;
     }
+    if (operationGeneration.current !== token) return;
+    onError("");
+    setOperationState("idle");
   }
 
-  async function switchInputMode(mode: Exclude<InputMode, "pdf">) {
+  async function leaveWorkflow(onLeave: () => void) {
+    if (operationState.current !== "idle") return;
     const token = ++operationGeneration.current;
+    setOperationState("cleanup");
     try {
-      await clearCurrentSession();
-      onError("");
-    } catch (error) {
+      await clearCurrentSession(token);
+    } catch {
       if (operationGeneration.current !== token) return;
-      onError(readableError(error), "workflowFailed");
-    } finally {
-      if (operationGeneration.current !== token) return;
-      onSwitchMode(mode);
+      onError("Could not clear the previous PDF session. Restart VeilSend before choosing another PDF.", "workflowFailed");
+      return;
     }
+    if (operationGeneration.current !== token) return;
+    onError("");
+    // Keep the gate closed until this instance unmounts; brand and tabs share it.
+    onLeave();
+    onBusyChange?.(false);
+  }
+
+  function switchInputMode(mode: Exclude<InputMode, "pdf">) {
+    return leaveWorkflow(() => onSwitchMode(mode));
   }
 
   function beginDraw(event: ReactPointerEvent<HTMLDivElement>) {
@@ -427,11 +479,13 @@ export function PdfWorkflow({
   if (stage === "add") {
     return (
       <section className="stage-view add-stage pdf-add-stage">
-        <InputModeTabs active="pdf" onChange={(mode) => mode !== "pdf" && void switchInputMode(mode)} />
+        <InputModeTabs active="pdf" disabled={busy} onChange={(mode) => mode !== "pdf" && void switchInputMode(mode)} />
         <div className="eyebrow"><Layers3 size={15} /> Flattened document safety</div>
         <h1>Turn a PDF into<br />pixels you can trust.</h1>
         <p className="lead">Choose a local PDF. VeilSend reviews every page, lets you cover anything the detectors miss, then rebuilds a separate image-only PDF with no searchable or editable text layer.</p>
 
+        <div className={`native-drop-zone ${busy ? "drop-busy" : dropActive ? "drop-active" : "drop-idle"}`} aria-busy={busy}>
+        <span className="drop-instruction" role="status" aria-live="polite">{dropPrompt("pdf", busy)}</span>
         <div className="pdf-picker-card">
           <div className="pdf-picker-visual" aria-hidden="true">
             <div className="document-sheet document-sheet-back" />
@@ -458,6 +512,7 @@ export function PdfWorkflow({
             </button>
             {!isDesktop() && <div className="desktop-only-note">PDF rendering and flattening use the Windows desktop engine. The browser preview keeps this control disabled.</div>}
           </div>
+        </div>
         </div>
 
         <div className="trust-row">

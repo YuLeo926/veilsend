@@ -3,12 +3,16 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
-import type { ImageSession, RuntimeInfo, SanitizeRequest, SanitizeResult, ScanReport } from "./lib/types";
+import type { ImageSession, PdfSession, RuntimeInfo, SanitizeRequest, SanitizeResult, ScanReport } from "./lib/types";
 
 const bridge = vi.hoisted(() => ({
   getRuntimeInfo: vi.fn(), scanText: vi.fn(), sanitizeText: vi.fn(), saveCleanedText: vi.fn(),
   pickImage: vi.fn(), clearImageSession: vi.fn(),
+  pickPdf: vi.fn(), openDroppedPdf: vi.fn(), clearPdfSession: vi.fn(), getPdfPagePreview: vi.fn(),
 }));
+const nativeDrop = vi.hoisted(() => ({ listen: vi.fn() }));
+vi.mock("@tauri-apps/api/webview", () => ({ getCurrentWebview: () => ({ onDragDropEvent: nativeDrop.listen }) }));
+let dropListener: (event: { payload: { type: "drop"; paths: string[] } }) => void;
 
 vi.mock("./lib/bridge", async (importOriginal) => ({
   ...await importOriginal<typeof import("./lib/bridge")>(),
@@ -42,6 +46,7 @@ const oldSession: ImageSession = {
   barcodes: { availability: "available", report: { findings: [], symbolsDetected: 0, decodedSymbols: 0, warnings: [] }, message: "checked" },
 };
 const newSession: ImageSession = { ...oldSession, sessionId: "new-session", filename: "new.png" };
+const oldPdf: PdfSession = { sessionId: "old-pdf", filename: "synthetic.pdf", bytes: 1024, pageCount: 1, warnings: [], pages: [{ pageIndex: 0, widthPoints: 100, heightPoints: 100, widthPixels: 200, heightPixels: 200, thumbnailDataUrl: oldSession.previewDataUrl, ocr: oldSession.ocr, faces: oldSession.faces, qr: oldSession.qr, barcodes: oldSession.barcodes }] };
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -103,6 +108,9 @@ beforeEach(() => {
   Object.values(bridge).forEach((mock) => mock.mockReset());
   bridge.getRuntimeInfo.mockResolvedValue(runtime);
   bridge.clearImageSession.mockResolvedValue(undefined);
+  bridge.clearPdfSession.mockResolvedValue(undefined);
+  bridge.getPdfPagePreview.mockResolvedValue({ pageIndex: 0, width: 200, height: 200, previewDataUrl: oldSession.previewDataUrl });
+  nativeDrop.listen.mockImplementation((listener) => { dropListener = listener; return Promise.resolve(vi.fn()); });
   writeText = vi.fn().mockResolvedValue(undefined);
   vi.stubGlobal("navigator", { clipboard: { writeText } });
   vi.stubGlobal("scrollTo", vi.fn());
@@ -185,6 +193,57 @@ describe("App text operation boundaries", () => {
     expect(writeText).toHaveBeenCalledWith(expect.stringContaining("findings_redacted=1\n"));
     expect(writeText.mock.calls[0][0]).not.toContain("output_sha256=");
     expect(bridge.saveCleanedText).toHaveBeenCalledWith("pasted-text.cleaned.txt", "[REDACTED]");
+  });
+});
+
+describe("App global PDF navigation", () => {
+  it.each(["picker", "drop"] as const)("blocks brand reset during pending PDF %s before a render", async (route) => {
+    const pending = deferred<PdfSession>();
+    (route === "picker" ? bridge.pickPdf : bridge.openDroppedPdf).mockReturnValueOnce(pending.promise);
+    await renderApp(); await act(async () => button("PDF").click());
+    await act(async () => {
+      if (route === "picker") button("Choose PDF").click();
+      else dropListener({ payload: { type: "drop", paths: ["synthetic.pdf"] } });
+      brand().click();
+    });
+    expect(container.querySelector(".pdf-add-stage")).not.toBeNull();
+    expect(brand().disabled).toBe(true);
+    await act(async () => pending.resolve(oldPdf));
+    expect(container.querySelector(".pdf-review-stage")).not.toBeNull();
+  });
+
+  it("serializes PDF restart/global brand cleanup before the next native session", async () => {
+    const cleanup = deferred<void>();
+    let backend: PdfSession | null = oldPdf;
+    bridge.pickPdf.mockResolvedValueOnce(oldPdf);
+    bridge.clearPdfSession.mockImplementationOnce(async () => { await cleanup.promise; backend = null; });
+    await renderApp(); await act(async () => button("PDF").click()); await act(async () => button("Choose PDF").click());
+    await act(async () => { button("Choose a different PDF").click(); brand().click(); });
+    expect(container.querySelector(".pdf-add-stage")).not.toBeNull();
+    expect(brand().disabled).toBe(true);
+    expect(bridge.clearPdfSession).toHaveBeenCalledTimes(1);
+    await act(async () => cleanup.resolve());
+    await act(async () => brand().click());
+    expect(container.textContent).toContain("Catch what should not");
+    const next = { ...oldPdf, sessionId: "new-pdf" };
+    bridge.openDroppedPdf.mockImplementationOnce(async () => { backend = next; return next; });
+    await act(async () => button("PDF").click());
+    await act(async () => dropListener({ payload: { type: "drop", paths: ["new.pdf"] } }));
+    expect(backend).toBe(next);
+    expect(bridge.clearPdfSession).toHaveBeenCalledTimes(1);
+    expect(bridge.getPdfPagePreview).toHaveBeenLastCalledWith("new-pdf", 0);
+  });
+
+  it("runs PDF review brand reset through cleanup and stays locked on cleanup failure", async () => {
+    const cleanup = deferred<void>(); bridge.pickPdf.mockResolvedValueOnce(oldPdf); bridge.clearPdfSession.mockReturnValueOnce(cleanup.promise);
+    await renderApp(); await act(async () => button("PDF").click()); await act(async () => button("Choose PDF").click());
+    await act(async () => { brand().click(); brand().click(); });
+    expect(bridge.clearPdfSession).toHaveBeenCalledTimes(1);
+    expect(container.querySelector(".pdf-review-stage")).not.toBeNull();
+    await act(async () => cleanup.reject(new Error("C:\\private\\cleanup")));
+    expect(brand().disabled).toBe(true);
+    expect(container.textContent).toContain("Could not clear the previous PDF session");
+    expect(container.textContent).not.toContain("private");
   });
 });
 

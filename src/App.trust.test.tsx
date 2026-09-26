@@ -110,7 +110,9 @@ describe("runtime identity indicator", () => {
     await act(async () => { root.render(<App />); await Promise.resolve(); });
     await setText("old");
     await act(async () => { button("Scan locally").click(); });
-    await act(async () => { button("PDF").click(); button("Text & logs").click(); });
+    await act(async () => { button("PDF").click(); });
+    // Leave through the mounted PDF workflow's cleanup gate, not stale text tabs.
+    await act(async () => { button("Text & logs").click(); });
     await setText("new");
     await act(async () => { button("Scan locally").click(); });
 
@@ -158,7 +160,8 @@ describe("runtime identity indicator", () => {
     await act(async () => { button("Clean & verify").click(); await Promise.resolve(); });
     await act(async () => { button("Save clean copy").click(); });
     await act(async () => { button("Scan something else").click(); });
-    await act(async () => { button("PDF").click(); button("Text & logs").click(); });
+    await act(async () => { button("PDF").click(); });
+    await act(async () => { button("Text & logs").click(); });
     await setText("new text");
     await act(async () => { button("Scan locally").click(); await Promise.resolve(); });
     await act(async () => { button("Clean & verify").click(); await Promise.resolve(); });

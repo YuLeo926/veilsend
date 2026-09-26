@@ -1,4 +1,4 @@
-import { useEffect, useImperativeHandle, useMemo, useRef, useState, type Ref } from "react";
+import { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type Ref } from "react";
 import {
   AlertTriangle,
   ArrowLeft,
@@ -27,9 +27,12 @@ import {
   cleanImageFile,
   clearImageSession,
   isDesktop,
+  openDroppedImage,
   pasteImage,
   pickImage,
 } from "../lib/bridge";
+import { useDesktopFileDrop } from "../hooks/useDesktopFileDrop";
+import { dropPrompt } from "../lib/fileDrop";
 import {
   buildDefaultDecisions,
   buildVisualFindings,
@@ -122,6 +125,9 @@ export function ImageWorkflow({
   const [result, setResult] = useState<CleanedImageFile | null>(null);
   const [decisions, setDecisions] = useState<Record<string, ImageRedactionDecision>>({});
   const [busy, setBusy] = useState(false);
+  const [dropActive, setDropActive] = useState(false);
+  const currentStage = useRef(stage);
+  currentStage.current = stage;
   // Synchronous gate also covers reentrant calls before React renders disabled controls.
   const operationState = useRef<"idle" | "working" | "cleanup">("idle");
   const operationGeneration = useRef(0);
@@ -182,12 +188,13 @@ export function ImageWorkflow({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [busy, stage]);
 
-  function acceptSession(nextSession: ImageSession) {
+  const acceptSession = useCallback((nextSession: ImageSession) => {
     setSession(nextSession);
     setDecisions(buildDefaultDecisions(nextSession));
     setResult(null);
+    currentStage.current = "review";
     onStageChange("review");
-  }
+  }, [onStageChange]);
 
   async function clearCurrentSession(token?: number) {
     if (!session) return;
@@ -201,11 +208,11 @@ export function ImageWorkflow({
     setDecisions({});
   }
 
-  function setOperationState(next: "idle" | "working" | "cleanup") {
+  const setOperationState = useCallback((next: "idle" | "working" | "cleanup") => {
     operationState.current = next;
     setBusy(next !== "idle");
     onBusyChange?.(next !== "idle");
-  }
+  }, [onBusyChange]);
 
   function cancelCurrentOperation(): number {
     const token = ++operationGeneration.current;
@@ -213,42 +220,38 @@ export function ImageWorkflow({
     return token;
   }
 
-  async function chooseImage() {
-    if (operationState.current !== "idle") return;
+  const acquireImage = useCallback(async (load: () => Promise<ImageSession | null>) => {
+    if (!isDesktop() || currentStage.current !== "add" || operationState.current !== "idle") return;
     const token = ++operationGeneration.current;
     setOperationState("working");
     onError("");
     try {
-      await clearCurrentSession(token);
-      const nextSession = await pickImage();
+      // Native accepted loaders replace atomically; canceling a picker preserves
+      // the previous session. Never clear again after a successful replacement.
+      const nextSession = await load();
       if (operationGeneration.current !== token) return;
       if (!nextSession) return;
       acceptSession(nextSession);
-    } catch (error) {
+    } catch {
       if (operationGeneration.current !== token) return;
-      onError(readableError(error), "inputRejected");
+      setSession(null);
+      setDecisions({});
+      setResult(null);
+      onStageChange("add");
+      onError("Could not open that image. Choose or paste one supported JPEG/PNG image.", "inputRejected");
     } finally {
       if (operationGeneration.current === token) setOperationState("idle");
     }
-  }
+  }, [acceptSession, onError, onStageChange, setOperationState]);
 
-  async function pasteScreenshot() {
-    if (operationState.current !== "idle") return;
-    const token = ++operationGeneration.current;
-    setOperationState("working");
-    onError("");
-    try {
-      await clearCurrentSession(token);
-      const nextSession = await pasteImage();
-      if (operationGeneration.current !== token) return;
-      acceptSession(nextSession);
-    } catch (error) {
-      if (operationGeneration.current !== token) return;
-      onError(readableError(error), "inputRejected");
-    } finally {
-      if (operationGeneration.current === token) setOperationState("idle");
-    }
-  }
+  function chooseImage() { return acquireImage(pickImage); }
+  function pasteScreenshot() { return acquireImage(pasteImage); }
+  const dropImage = useCallback((path: string) => acquireImage(() => openDroppedImage(path)), [acquireImage]);
+  useDesktopFileDrop({
+    enabled: stage === "add" && isDesktop(), kind: "image", busy,
+    onDrop: dropImage, onActive: setDropActive,
+    onError: (message) => onError(message, "inputRejected"),
+  });
 
   async function createCleanCopy() {
     if (!session || operationState.current !== "idle") return;
@@ -321,6 +324,8 @@ export function ImageWorkflow({
         <h1>Find what the image<br />should not reveal.</h1>
         <p className="lead">Choose a JPEG or PNG, or paste a screenshot. VeilSend checks visible text, faces, QR codes, one-dimensional barcodes, and hidden metadata—all locally.</p>
 
+        <div className={`native-drop-zone ${busy ? "drop-busy" : dropActive ? "drop-active" : "drop-idle"}`} aria-busy={busy}>
+        <span className="drop-instruction" role="status" aria-live="polite">{dropPrompt("image", busy)}</span>
         <div className="image-picker-card">
           <div className="image-picker-visual" aria-hidden="true">
             <div className="photo-sheet photo-sheet-back" />
@@ -356,6 +361,7 @@ export function ImageWorkflow({
             </div>
             {!isDesktop() && <div className="desktop-only-note">Image checks and cleaning run in the Windows desktop app. The browser preview keeps this control disabled.</div>}
           </div>
+        </div>
         </div>
 
         <div className="trust-row">
