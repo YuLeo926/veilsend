@@ -1,0 +1,93 @@
+name: Five-minute trial feedback
+description: Tell us whether VeilSend helped with a real workflow, using descriptions and fake examples only.
+title: "[Trial] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This is a PUBLIC GitHub issue, not a private survey. No purchase or contact details are needed.
+        Never attach real files, customer data, paths, secrets, screenshots, logs, OCR text or decoded payloads.
+        Describe your workflow without identifying people or customers. Use synthetic examples only.
+        Report vulnerabilities through private security reporting instead: https://github.com/YuLeo926/veilsend/security/advisories/new
+  - type: input
+    id: version
+    attributes:
+      label: App version and Windows version
+      placeholder: "VeilSend 0.2.0-beta.1; Windows 11 x64; installer"
+      description: No machine name, account name, license key or local path.
+    validations:
+      required: true
+  - type: dropdown
+    id: workflow
+    attributes:
+      label: Which workflow did you try?
+      options:
+        - Text or support logs
+        - Screenshots or images
+        - PDF documents
+        - Installation or first launch only
+    validations:
+      required: true
+  - type: dropdown
+    id: frequency
+    attributes:
+      label: How often do you need to remove sensitive details before sharing?
+      options:
+        - This was a one-off experiment
+        - Less than once a month
+        - A few times a month
+        - A few times a week
+        - Daily
+    validations:
+      required: true
+  - type: textarea
+    id: previous-method
+    attributes:
+      label: What would you normally do without VeilSend?
+      description: Describe the task and alternative, including doing nothing. Do not name customers or include real content.
+    validations:
+      required: true
+  - type: dropdown
+    id: outcome
+    attributes:
+      label: How far did you get?
+      options:
+        - Could not install or launch
+        - Opened the app but could not finish
+        - Saved a copy but still needed another tool
+        - Saved and inspected a copy without another tool
+    validations:
+      required: true
+  - type: textarea
+    id: experience
+    attributes:
+      label: What helped, and what got in the way?
+      description: Describe the step. If you compared time or effort with your usual method, say how; an honest "no difference" is useful. No real files or screenshots.
+    validations:
+      required: true
+  - type: textarea
+    id: next-use
+    attributes:
+      label: Would you use it again? What is the single most important missing improvement?
+      description: "It is fine to say no. Do not include future dates or customer-identifying details."
+    validations:
+      required: true
+  - type: dropdown
+    id: paid-interest
+    attributes:
+      label: Optional — would you consider paying for a future improved version?
+      description: Research only. No paid plan exists, and this is not an order or purchase commitment.
+      options:
+        - Prefer not to answer
+        - No — free tools meet my needs
+        - Maybe — depends on a specific improvement
+        - Yes — if it reliably saves me work
+    validations:
+      required: false
+  - type: checkboxes
+    id: privacy-confirmation
+    attributes:
+      label: Before submitting
+      options:
+        - label: I understand this issue is public and have included no real files, customer details, secrets, local paths, logs, screenshots, OCR text or decoded payloads.
+          required: true

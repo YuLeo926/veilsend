@@ -37,6 +37,8 @@ jobs:
         run: npm test
       - name: Frontend build
         run: npm run build
+      - name: Product site build
+        run: npm run build:site
       - name: Rust format
         run: cargo fmt --all -- --check
       - name: Rust lint

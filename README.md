@@ -8,7 +8,17 @@ VeilSend is a local-first outbound safety gate for text, logs, configuration fil
 
 ## 0.2.0-beta.1 experimental Beta
 
-The Windows 10/11 x64 beta is an unsigned pre-release for experimental evaluation. Core text/image/PDF workflows passed limited smoke testing on one Windows 11 development host. Clean-system compatibility, portable runtime, uninstall preservation, disconnected-network operation, and the full manual acceptance matrix remain unverified. Read the [validation scope](docs/releases/v0.2.0-beta.1-experimental.md). Keep originals and review every result; `Verified` describes completed supported checks, not universal safety.
+The Windows 10/11 x64 beta is an unsigned pre-release for experimental evaluation. Core text/image/PDF workflows passed limited smoke testing on one Windows 11 development host. A later [portable text trial](docs/releases/2026-09-28-portable-text-smoke.md) passed on that development host. Clean-system compatibility, portable image/PDF workflows, uninstall preservation, disconnected-network operation, and the full manual acceptance matrix remain unverified. Read the [original validation scope](docs/releases/v0.2.0-beta.1-experimental.md) and the supplemental record. Keep originals and review every result; `Verified` describes completed supported checks, not universal safety.
+
+**New here?** Start with the built-in **Try safe sample**, then **Scan locally → Clean & verify → Save clean copy**. Use fake data first and inspect the saved result. Keep outputs outside the application directory.
+
+- [Official Windows experimental download](https://github.com/YuLeo926/veilsend/releases/tag/v0.2.0-beta.1)
+- [中文安装、试用与卸载指南](docs/getting-started.zh-CN.md)
+- [Product website](https://yuleo926.github.io/veilsend/)
+- [English install, trial and uninstall guide](https://yuleo926.github.io/veilsend/guide.html)
+- [Trial feedback](https://github.com/YuLeo926/veilsend/issues/new?template=trial-feedback.yml) — public GitHub issue; fake examples only. A GitHub account is required.
+
+To remove an installed copy, close VeilSend, then use Windows **Settings → Apps** and search for **VeilSend**. If absent, try **Win + R → appwiz.cpl** or inspect the Start menu shortcut's target. The read-only `scripts/find-installation.ps1` can locate registered or running copies without modifying the system; its local-path output must not be posted publicly. Back up saved outputs first: uninstall preservation remains unverified for this beta.
 
 ## Current milestone
 
@@ -90,7 +100,7 @@ npm run tauri dev
 
 Official binaries are distributed only through the [VeilSend GitHub pre-releases](https://github.com/YuLeo926/veilsend/releases). **This experimental Beta has not completed clean-Windows acceptance.** VeilSend 0.2.0-beta.1 is an **unsigned pre-release**: Microsoft SmartScreen may warn before its first run. A warning does not prove a file is authentic.
 
-| Planned Release asset | Purpose |
+| Release asset | Purpose |
 | --- | --- |
 | `VeilSend_0.2.0-beta.1_x64-setup-UNSIGNED.exe` | Current-user Windows setup, no administrator rights required |
 | `VeilSend_0.2.0-beta.1_x64-portable-UNSIGNED.zip` | Portable app; extract before launching |
@@ -174,6 +184,7 @@ The browser preview itself is delivered by a local Vite server during developmen
 - [Beta changelog](CHANGELOG.md)
 - [Contribution guide](CONTRIBUTING.md)
 - [Beta release runbook](docs/release.md)
+- [First-user launch preparation and validation gaps](docs/launch-readiness.md)
 
 ## License
 
