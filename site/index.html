@@ -1,0 +1,422 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Review sensitive information in logs, screenshots and PDFs before sharing. VeilSend is a free, open-source Windows desktop beta with local processing."
+    />
+    <meta name="referrer" content="no-referrer" />
+    <meta name="color-scheme" content="light" />
+    <title>VeilSend — A second look before you send</title>
+    <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="./style.css" />
+    <script type="module" src="./demo.js"></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="site-header wrap">
+      <a class="brand" href="./index.html" aria-label="VeilSend home"
+        ><span class="brand-mark" aria-hidden="true">V<span></span></span
+        >VeilSend</a
+      >
+      <nav aria-label="Main navigation">
+        <a href="#workflow">How it works</a
+        ><a href="./guide.html">Get started</a><a href="#feedback">Feedback</a>
+      </nav>
+      <a class="source-link" href="https://github.com/YuLeo926/veilsend"
+        >Source code <span aria-hidden="true">↗</span></a
+      >
+    </header>
+    <main id="main">
+      <section class="hero wrap" aria-labelledby="hero-title">
+        <div class="hero-copy">
+          <p class="eyebrow">
+            <span class="short-rule" aria-hidden="true"></span> BEFORE IT LEAVES
+            YOUR COMPUTER
+          </p>
+          <h1 id="hero-title">
+            Share the context.<br />Keep the <em>private bits.</em>
+          </h1>
+          <p class="intro">
+            A second look at the logs, screenshots and PDFs you send. Find
+            likely sensitive details, make a separate redacted copy, and check
+            the saved result.
+          </p>
+          <div class="actions">
+            <a class="button primary" href="./guide.html#download"
+              >Try the Windows beta <span aria-hidden="true">↗</span></a
+            ><a class="text-link" href="#workflow"
+              >See the workflow <span aria-hidden="true">↓</span></a
+            >
+          </div>
+          <p class="download-note">
+            Free &amp; open source · Windows x64<br /><strong
+              >v0.2.0-beta.1 · Unsigned experimental build</strong
+            >
+          </p>
+        </div>
+        <figure class="sample-card">
+          <div class="sample-top">
+            <span class="document-label">SUPPORT HANDOFF / EXAMPLE</span
+            ><span class="sample-tag">Synthetic data</span>
+          </div>
+          <div class="sample-body">
+            <p class="sample-filename">support-handoff.log</p>
+            <p class="code-line">
+              <span class="line-number">01</span
+              ><span>status=<b>connection_timeout</b></span>
+            </p>
+            <p class="code-line">
+              <span class="line-number">02</span
+              ><span>customer=<span class="redaction">[EMAIL]</span></span>
+            </p>
+            <p class="code-line">
+              <span class="line-number">03</span
+              ><span>api_key=<span class="redaction">[SECRET]</span></span>
+            </p>
+            <p class="code-line">
+              <span class="line-number">04</span
+              ><span>host=<span class="redaction">[PRIVATE_IP]</span></span>
+            </p>
+            <p class="code-line">
+              <span class="line-number">05</span
+              ><span>retry_in=<b>30s</b></span>
+            </p>
+          </div>
+          <div class="sample-bottom">
+            <span class="check-mark" aria-hidden="true">✓</span>
+            <div>
+              <strong>Useful context stays.</strong
+              ><span>Selected details become replacements.</span>
+            </div>
+          </div>
+          <figcaption>
+            Workflow illustration, not a live scan or an app screenshot.
+          </figcaption>
+        </figure>
+      </section>
+      <div class="principles wrap" aria-label="Product principles">
+        <span>01 / Process on your device</span
+        ><span>02 / Keep the original</span
+        ><span>03 / Check the saved copy</span>
+      </div>
+
+      <section
+        class="section wrap"
+        id="use-cases"
+        aria-labelledby="cases-title"
+      >
+        <div class="section-heading">
+          <p class="eyebrow">ONE LAST CHECK</p>
+          <h2 id="cases-title">
+            For the everyday<br />“can you send that over?”
+          </h2>
+          <p>
+            Built for support handoffs, bug reports and client updates. One file
+            at a time, with you in control.
+          </p>
+        </div>
+        <div class="use-cases">
+          <article>
+            <span class="case-number">01 / TEXT &amp; LOGS</span>
+            <h3>The bug report.<br />Not the API key.</h3>
+            <p>
+              Review likely credentials, email addresses, private IPs and local
+              paths in text, logs, JSON and .env files.
+            </p>
+          </article>
+          <article>
+            <span class="case-number">02 / SCREENSHOTS</span>
+            <h3>The screen.<br />Not every detail.</h3>
+            <p>
+              Review detected text, faces, QR codes and barcodes. Cover selected
+              regions and remove supported image metadata.
+            </p>
+          </article>
+          <article>
+            <span class="case-number">03 / PDF DOCUMENTS</span>
+            <h3>The document.<br />A separate copy.</h3>
+            <p>
+              Review pages and add manual covers. Export a rebuilt, image-only
+              PDF without the original text layer or active objects.
+            </p>
+            <p class="small">
+              PDF output loses text search, selection, forms and signatures.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section
+        class="workflow-section"
+        id="workflow"
+        aria-labelledby="workflow-title"
+      >
+        <div class="wrap workflow-layout">
+          <div>
+            <p class="eyebrow">INSPECT → CLEAN → CHECK</p>
+            <h2 id="workflow-title">A pause.<br />Not a whole process.</h2>
+            <p>
+              Review what gets removed. Then inspect the result before you share
+              it.
+            </p>
+            <p class="small">
+              Explore a fixed synthetic example below. This website does not
+              scan, accept or upload your files.
+            </p>
+          </div>
+          <div class="demo">
+            <div
+              class="demo-controls"
+              role="group"
+              aria-label="Example workflow steps"
+              hidden
+            >
+              <button type="button" data-step="0" aria-pressed="true">
+                1. Inspect
+              </button>
+              <button type="button" data-step="1" aria-pressed="false">
+                2. Clean
+              </button>
+              <button type="button" data-step="2" aria-pressed="false">
+                3. Check
+              </button>
+            </div>
+            <div id="demo-content" aria-live="polite" aria-atomic="true">
+              <p class="eyebrow" id="demo-kicker">STEP 1 / INSPECT</p>
+              <h3 id="demo-title">
+                Find the details you did not mean to send.
+              </h3>
+              <pre id="demo-example">
+customer=alex@example.com
+host=192.168.12.44
+status=connection_timeout</pre
+              >
+              <p id="demo-description">
+                In the desktop app, review suggested replacements before
+                cleaning. This example contains an email address and a private
+                IP.
+              </p>
+            </div>
+            <p class="demo-disclaimer">
+              Illustration only. “Verified” means supported checks completed,
+              not that every sensitive detail was found.
+            </p>
+            <noscript
+              ><p>
+                The app lets you review matches, create a separate copy, and
+                check its saved output. The interactive illustration needs
+                JavaScript; downloads and guides do not.
+              </p></noscript
+            >
+          </div>
+        </div>
+      </section>
+
+      <section
+        class="section wrap desktop-gallery"
+        id="desktop-preview"
+        aria-labelledby="desktop-title"
+      >
+        <div class="section-heading">
+          <p class="eyebrow">FROM THE WINDOWS APP</p>
+          <h2 id="desktop-title">
+            The actual app.<br />A deliberately fake log.
+          </h2>
+          <p>
+            Captured from the published v0.2.0-beta.1 portable app on a Windows
+            11 development computer. These are screenshots, not a video or a
+            browser simulation.
+          </p>
+        </div>
+        <details class="desktop-shot">
+          <summary>01 / Load the built-in synthetic sample</summary>
+          <figure>
+            <a
+              href="./screenshots/text-sample.jpg"
+              aria-label="Open full-size screenshot of the synthetic text sample"
+              ><img
+                src="/screenshots/text-sample.jpg"
+                width="1707"
+                height="1019"
+                loading="lazy"
+                decoding="async"
+                alt="VeilSend desktop app showing its built-in fake support log and Scan locally button."
+            /></a>
+            <figcaption>
+              All names, addresses, credentials and paths in this sample are
+              synthetic. Open the image to inspect it at full size.
+            </figcaption>
+          </figure>
+        </details>
+        <details class="desktop-shot" open>
+          <summary>02 / Review the proposed replacements</summary>
+          <figure>
+            <a
+              href="./screenshots/text-review.jpg"
+              aria-label="Open full-size screenshot of the six findings"
+              ><img
+                src="/screenshots/text-review.jpg"
+                width="1707"
+                height="1019"
+                loading="lazy"
+                decoding="async"
+                alt="VeilSend desktop review showing six findings selected for cleanup and zero intentional exceptions."
+            /></a>
+            <figcaption>
+              This sample produced six findings, including its custom sensitive
+              term. Counts depend on input and enabled rules.
+            </figcaption>
+          </figure>
+        </details>
+        <details class="desktop-shot">
+          <summary>03 / Inspect the cleaned text</summary>
+          <figure>
+            <a
+              href="./screenshots/text-clean.jpg"
+              aria-label="Open full-size screenshot of the cleaned text"
+              ><img
+                src="/screenshots/text-clean.jpg"
+                width="1707"
+                height="1019"
+                loading="lazy"
+                decoding="async"
+                alt="VeilSend desktop cleaned-text preview with replacement labels, zero remaining rule matches and a Save clean copy button."
+            /></a>
+            <figcaption>
+              This frame is the cleaned preview, before saving. In the
+              subsequent test, a separate file was saved and reread; seven
+              predefined source markers were absent. That is a bounded sample
+              check, not a guarantee.
+            </figcaption>
+          </figure>
+        </details>
+        <p class="small">
+          No personal files were used. This additional portable text test does
+          not establish clean-PC compatibility, image/PDF portable behavior,
+          offline operation or uninstall preservation.
+        </p>
+      </section>
+
+      <section
+        class="section wrap boundaries"
+        aria-labelledby="boundaries-title"
+      >
+        <div class="section-heading">
+          <p class="eyebrow">CLEAR BOUNDARIES</p>
+          <h2 id="boundaries-title">Local processing.<br />Human judgment.</h2>
+          <p>
+            No account in the desktop app. No analytics or crash uploads. No
+            automatic sharing.
+          </p>
+        </div>
+        <div class="boundary-list">
+          <details open>
+            <summary>What stays on my computer?</summary>
+            <p>
+              The desktop app processes source content locally. It does not
+              upload files or use cloud inference. The installer may need
+              internet access to obtain Microsoft WebView2. Disconnected
+              operation has not yet been verified for this beta.
+            </p>
+          </details>
+          <details>
+            <summary>What does “Verified” actually mean?</summary>
+            <p>
+              Supported checks completed for that output with no remaining
+              supported findings or intentional exceptions. Detectors can miss
+              information. Keep originals and manually inspect every output;
+              this is not a safety guarantee or a compliance certification.
+            </p>
+          </details>
+          <details>
+            <summary>What can this beta handle?</summary>
+            <p>
+              UTF-8 text up to 10 MiB; JPEG/PNG up to 25 MiB; unencrypted PDFs
+              up to 50 MiB and 50 pages, subject to render limits. One file at a
+              time. No Office files, batch processing or Mac/Linux desktop
+              builds.
+            </p>
+          </details>
+          <details>
+            <summary>Is it ready for critical work?</summary>
+            <p>
+              No. This is an unsigned experimental beta, not a stable release.
+              Core workflows were smoke-tested on one Windows 11 development
+              computer with synthetic data. A portable text trial also passed on
+              that development computer. Clean-system compatibility, portable
+              image/PDF workflows and uninstall preservation remain unverified.
+              Start with fake data.
+            </p>
+            <a
+              href="https://github.com/YuLeo926/veilsend/blob/master/docs/releases/v0.2.0-beta.1-experimental.md"
+              >Read the recorded validation scope ↗</a
+            >
+          </details>
+          <details>
+            <summary>What does it cost?</summary>
+            <p>
+              This beta is free and open source under the MIT license. There is
+              no paid plan or checkout today. We are learning which workflows
+              need improvement before deciding whether to offer optional paid
+              features.
+            </p>
+          </details>
+        </div>
+      </section>
+
+      <section
+        class="feedback-section wrap"
+        id="feedback"
+        aria-labelledby="feedback-title"
+      >
+        <div>
+          <p class="eyebrow">HELP SHAPE THE NEXT VERSION</p>
+          <h2 id="feedback-title">
+            Try one handoff.<br />Tell us what got in the way.
+          </h2>
+          <p>
+            Did it save a step? Did you have to switch to another tool?
+            Practical feedback matters more than a star.
+          </p>
+        </div>
+        <div class="feedback-actions">
+          <a class="button primary" href="./guide.html#first-run"
+            >Start the five-minute trial</a
+          ><a
+            class="button secondary"
+            href="https://github.com/YuLeo926/veilsend/issues/new?template=trial-feedback.yml"
+            >Share trial feedback ↗</a
+          >
+          <p class="small">
+            GitHub account required. Feedback issues are public. Use
+            descriptions and fake examples only—never customer files, secrets,
+            private paths or screenshots of real data.
+          </p>
+          <a
+            class="text-link"
+            href="https://github.com/YuLeo926/veilsend/security/advisories/new"
+            >Report a security issue privately ↗</a
+          >
+        </div>
+      </section>
+    </main>
+    <footer class="wrap site-footer">
+      <a class="brand" href="./index.html">VeilSend</a>
+      <p>Look once more. Share a little less.</p>
+      <div>
+        <a href="./guide.html">Install &amp; uninstall</a
+        ><a href="https://github.com/YuLeo926/veilsend/blob/master/LICENSE"
+          >MIT license</a
+        >
+      </div>
+      <p class="footer-note">
+        No analytics, remote fonts or embedded third-party services on this
+        page. Hosting providers and GitHub may process connection information
+        when you visit them.
+      </p>
+    </footer>
+  </body>
+</html>
